@@ -68,8 +68,8 @@ class OffboardControl(Node):
         self.kdr = 10.0
 
         self.kpp = 1.0
-        self.kip = 0.01
-        self.kdp = 10.0
+        self.kip = 0.001
+        self.kdp = 20.0
 
         # Instantiate error parameters
         # World frame
