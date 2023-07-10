@@ -98,7 +98,7 @@ class OffboardControl(Node):
         self.prev_err_yaw = 0.0
 
         # Define goal position, this needs to be a trajectory in the future!!!
-        self.goal = [0.0, 0.0, -10.0]
+        self.goal = [4.0, 3.0, -10.0]
 
     def odometry_callback(self, msg):
         """Recieves odometry data, does PID control math, publishes thrust and angular rates as inputs"""
@@ -142,7 +142,7 @@ class OffboardControl(Node):
         err_dif_y_body = err_y_body - self.prev_err_y_body
 
         roll = self.kpx * err_x_body + self.kix * self.err_sum_x_body + self.kdx * err_dif_x_body
-        pitch = self.kpy * err_y_body + self.kiy * self.err_sum_y_body + self.kdy * err_dif_y_body
+        pitch = -1*(self.kpy * err_y_body + self.kiy * self.err_sum_y_body + self.kdy * err_dif_y_body)
 
         # Remove this lateer!!!
         # Bypassing controller for now
@@ -205,7 +205,7 @@ class OffboardControl(Node):
 
         err_dif_pitch = pitch_err - self.prev_err_pitch
 
-        pitch_rate = -1*(self.kpp * pitch_err + self.kip * self.err_sum_pitch + self.kdp * err_dif_pitch)
+        pitch_rate = self.kpp * pitch_err + self.kip * self.err_sum_pitch + self.kdp * err_dif_pitch
 
         if pitch_rate <= -0.1:
             pitch_rate = -0.1
@@ -218,7 +218,9 @@ class OffboardControl(Node):
         self.prev_err_pitch = pitch_err
 
         #print(self.goal[0], err_x_body, roll_rate)
-        print(self.goal[1], err_y_body, pitch_rate)
+        #print(self.goal[1], err_y_body, pitch_rate)
+        #print(x, y, roll, pitch, yaw_meas)
+        print(x, y)
 
         # Yaw
         yaw_ref = 0.0
