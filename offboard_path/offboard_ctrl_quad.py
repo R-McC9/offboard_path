@@ -54,22 +54,22 @@ class OffboardControl(Node):
 
         # Position controller
         # roll/pitch setpoint (body frame)
-        self.kpx = 0.5
-        self.kix = 0.3
-        self.kdx = 20.0
+        self.kpx = 1.0
+        self.kix = 0.000000001
+        self.kdx = 10.000000001
 
-        self.kpy = 0.5
-        self.kiy = 0.3
-        self.kdy = 20.0
+        self.kpy = 1.0
+        self.kiy = 0.000000001
+        self.kdy = 10.0
 
         # rates setpoints
-        self.kpr = 0.5
-        self.kir = 0.001
-        self.kdr = 10.0
+        self.kpr = 0.000005
+        self.kir = 0.09
+        self.kdr = 100.0
 
-        self.kpp = 1.0
-        self.kip = 0.001
-        self.kdp = 20.0
+        self.kpp = 0.0000005
+        self.kip = 0.09
+        self.kdp = 100.0
 
         # Instantiate error parameters
         # World frame
@@ -141,8 +141,8 @@ class OffboardControl(Node):
         err_dif_x_body = err_x_body - self.prev_err_x_body
         err_dif_y_body = err_y_body - self.prev_err_y_body
 
-        roll = self.kpp * err_x_body + self.kip * self.err_sum_x_body + self.kdp * err_dif_x_body
-        pitch = self.kpr * err_y_body + self.kir * self.err_sum_y_body + self.kdr * err_dif_y_body
+        roll = self.kpx * err_x_body + self.kix * self.err_sum_x_body + self.kdx * err_dif_x_body
+        pitch = self.kpy * err_y_body + self.kiy * self.err_sum_y_body + self.kdy * err_dif_y_body
 
         # Remove this lateer!!!
         # Bypassing controller for now
@@ -151,7 +151,7 @@ class OffboardControl(Node):
         # roll = 0
         # pitch = -5
 
-        # Clamping terms to aoid over pitching/rolling
+        # Clamping terms to avoid over pitching/rolling
         if pitch <= -5:
             pitch = -5
             self.err_sum_pitch = 0
@@ -172,6 +172,9 @@ class OffboardControl(Node):
         self.prev_err_y_body = err_y_body
 
         # PID controllers to track roll and pitch setpoints
+
+        # +roll_rate = right, -roll_rate = left
+        # +pitch_rate = backward, -pitch_rate = forward
         # Roll
         roll_ref = roll
 
@@ -181,7 +184,7 @@ class OffboardControl(Node):
 
         err_dif_roll = roll_err  - self.prev_err_roll
 
-        roll_rate = self.kpr * roll_err + self.kir * self.err_sum_roll + self.kdr * err_dif_roll
+        roll_rate = -1*(self.kpr * roll_err + self.kir * self.err_sum_roll + self.kdr * err_dif_roll)
 
         if roll_rate <= -0.1:
             roll_rate = -0.1
@@ -202,7 +205,7 @@ class OffboardControl(Node):
 
         err_dif_pitch = pitch_err - self.prev_err_pitch
 
-        pitch_rate = self.kpp * pitch_err + self.kip * self.err_sum_pitch + self.kdp * err_dif_pitch
+        pitch_rate = -1*(self.kpp * pitch_err + self.kip * self.err_sum_pitch + self.kdp * err_dif_pitch)
 
         if pitch_rate <= -0.1:
             pitch_rate = -0.1
@@ -214,21 +217,22 @@ class OffboardControl(Node):
 
         self.prev_err_pitch = pitch_err
 
-        print(x, y)
+        #print(self.goal[0], err_x_body, roll_rate)
+        print(self.goal[1], err_y_body, pitch_rate)
 
         # Yaw
-        # yaw_ref = 0.0
+        yaw_ref = 0.0
 
-        # yaw_err = yaw_ref - yaw_meas
+        yaw_err = yaw_ref - yaw_meas
 
-        # self.err_sum_yaw += yaw_err
+        self.err_sum_yaw += yaw_err
 
-        # err_dif_yaw = yaw_err - self.prev_err_yaw
+        err_dif_yaw = yaw_err - self.prev_err_yaw
 
-        # yaw_rate = self.kpy * yaw_err + self.kiy * self.err_sum_yaw + self.kdy * err_dif_yaw
+        yaw_rate = self.kpy * yaw_err + self.kiy * self.err_sum_yaw + self.kdy * err_dif_yaw
 
-        # self.prev_err_yaw = yaw_err
-        yaw_rate = 0.0
+        self.prev_err_yaw = yaw_err
+        # yaw_rate = 0.0
 
         # Altitude controller
         err_z = self.goal[2] - z
@@ -251,7 +255,7 @@ class OffboardControl(Node):
         self.prev_err_z = err_z
 
         thrust_rates = [0.0, 0.0, U_z]
-        ang_rates = [0.0, pitch_rate, yaw_rate]
+        ang_rates = [roll_rate, pitch_rate, 0.0]
 
         # Compute thrust input using PID controller math
         self.publish_rates_setpoint(ang_rates, thrust_rates)
@@ -261,18 +265,18 @@ class OffboardControl(Node):
        
         t0 = +2.0 * (w * i + j * k)
         t1 = +1.0 - 2.0 * (i * i + jsqr)
-        roll_x = np.degrees(np.arctan2(t0, t1))
+        roll_x = np.radians(np.arctan2(t0, t1))
         
         t2 = +2.0 * (w * j - k * i)
         # t2 = +1.0 if t2 > +1.0 else t2
         # t2 = -1.0 if t2 < -1.0 else t2
         t2 = np.where(t2>+1.0, +1.0, t2)
         t2 = np.where(t2<-1.0, -1.0, t2)
-        pitch_y = np.degrees(np.arcsin(t2))
+        pitch_y = np.radians(np.arcsin(t2))
         
         t3 = +2.0 * (w * k + i * j)
         t4 = +1.0 - 2.0 * (jsqr + k * k)
-        yaw_z = np.degrees(np.arctan2(t3, t4))
+        yaw_z = np.radians(np.arctan2(t3, t4))
         
         return roll_x, pitch_y, yaw_z # in radians
 
