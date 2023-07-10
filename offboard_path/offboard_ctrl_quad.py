@@ -63,12 +63,12 @@ class OffboardControl(Node):
         self.kdy = 10.0
 
         # rates setpoints
-        self.kpr = 0.000005
-        self.kir = 0.09
+        self.kpr = 0.0000005
+        self.kir = 0.03
         self.kdr = 100.0
 
         self.kpp = 0.0000005
-        self.kip = 0.09
+        self.kip = 0.03
         self.kdp = 100.0
 
         # Instantiate error parameters
