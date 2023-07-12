@@ -71,6 +71,10 @@ class OffboardControl(Node):
         self.kip = 0.03
         self.kdp = 100.0
 
+        self.kp_yaw = 1.0
+        self.ki_yaw = 0.01
+        self.kd_yaw = 10.0
+
         # Instantiate error parameters
         # World frame
         self.prev_err_x = 0.0
@@ -98,7 +102,7 @@ class OffboardControl(Node):
         self.prev_err_yaw = 0.0
 
         # Define goal position, this needs to be a trajectory in the future!!!
-        self.goal = [4.0, 3.0, -10.0]
+        self.goal = [0.0, 0.0, -10.0]
 
     def odometry_callback(self, msg):
         """Recieves odometry data, does PID control math, publishes thrust and angular rates as inputs"""
@@ -220,10 +224,9 @@ class OffboardControl(Node):
         #print(self.goal[0], err_x_body, roll_rate)
         #print(self.goal[1], err_y_body, pitch_rate)
         #print(x, y, roll, pitch, yaw_meas)
-        print(x, y)
 
         # Yaw
-        yaw_ref = 0.0
+        yaw_ref = 0.0 #Radians
 
         yaw_err = yaw_ref - yaw_meas
 
@@ -231,10 +234,18 @@ class OffboardControl(Node):
 
         err_dif_yaw = yaw_err - self.prev_err_yaw
 
-        yaw_rate = self.kpy * yaw_err + self.kiy * self.err_sum_yaw + self.kdy * err_dif_yaw
+        yaw_rate = self.kp_yaw * yaw_err + self.ki_yaw * self.err_sum_yaw + self.kd_yaw * err_dif_yaw
 
         self.prev_err_yaw = yaw_err
-        # yaw_rate = 0.0
+
+        if yaw_rate <= -0.1:
+            yaw_rate = -0.1
+            self.err_sum_yaw = 0
+
+        if yaw_rate >= 0.1:
+            yaw_rate = 0.1
+            self.err_sum_yaw = 0
+        # yaw_rate = 0.01
 
         # Altitude controller
         err_z = self.goal[2] - z
@@ -258,9 +269,24 @@ class OffboardControl(Node):
 
         thrust_rates = [0.0, 0.0, U_z]
         ang_rates = [roll_rate, pitch_rate, 0.0]
+        # thrust_rates = [0.0, 0.0, 0.0]
+        # ang_rates = [0.0, 0.0, 0.0]
+
+        # print(yaw_meas, yaw_err, yaw_rate)
 
         # Compute thrust input using PID controller math
         self.publish_rates_setpoint(ang_rates, thrust_rates)
+
+        # if msg.err_z <= 0.01:
+        #     self.update_goal() 
+
+        self.update_goal()
+
+    def update_goal(self):
+        """Takes in the current timestamp and updates the goal position accordingly"""
+        # Goal is presently just XYZ position, need to add quaternion orientation.
+        # May consider also including the goal velocity
+        self.goal = [0.0, 0.0, -10 + 2*math.sin(int(self.get_clock().now().nanoseconds / 1000)*0.000001)]
 
     def euler_from_quaternion(self, w, i, j, k):
         jsqr = j * j

@@ -11,7 +11,7 @@ class OdomListener(Node):
     def __init__(self):
         super().__init__('odom_listener')
         
-        #Need custom QoS profile!!!!!
+        #Need custom QoS profile
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -28,7 +28,6 @@ class OdomListener(Node):
         self.odometry_listener_
 
     def odometry_callback(self, msg):
-        print("we are in the odometery callback function")
         self.get_logger().info('Recieveing messages from odometry topic: "%s"' % msg.position)
 
 def main(args=None):
