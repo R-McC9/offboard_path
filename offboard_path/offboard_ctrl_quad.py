@@ -56,7 +56,7 @@ class OffboardControl(Node):
         # roll/pitch setpoint (body frame)
         self.kpx = 1.0
         self.kix = 0.000000001
-        self.kdx = 10.000000001
+        self.kdx = 10.0
 
         self.kpy = 1.0
         self.kiy = 0.000000001
@@ -226,7 +226,7 @@ class OffboardControl(Node):
         #print(x, y, roll, pitch, yaw_meas)
 
         # Yaw
-        yaw_ref = 0.0 #Radians
+        yaw_ref = 0.0 #degrees
 
         yaw_err = yaw_ref - yaw_meas
 
@@ -280,7 +280,7 @@ class OffboardControl(Node):
         # if msg.err_z <= 0.01:
         #     self.update_goal() 
 
-        self.update_goal()
+        print(yaw_meas, yaw_err, yaw_rate)
 
     def update_goal(self):
         """Takes in the current timestamp and updates the goal position accordingly"""
@@ -293,18 +293,18 @@ class OffboardControl(Node):
        
         t0 = +2.0 * (w * i + j * k)
         t1 = +1.0 - 2.0 * (i * i + jsqr)
-        roll_x = np.radians(np.arctan2(t0, t1))
+        roll_x = np.degrees(np.arctan2(t0, t1))
         
         t2 = +2.0 * (w * j - k * i)
         # t2 = +1.0 if t2 > +1.0 else t2
         # t2 = -1.0 if t2 < -1.0 else t2
         t2 = np.where(t2>+1.0, +1.0, t2)
         t2 = np.where(t2<-1.0, -1.0, t2)
-        pitch_y = np.radians(np.arcsin(t2))
+        pitch_y = np.degrees(np.arcsin(t2))
         
         t3 = +2.0 * (w * k + i * j)
         t4 = +1.0 - 2.0 * (jsqr + k * k)
-        yaw_z = np.radians(np.arctan2(t3, t4))
+        yaw_z = np.degrees(np.arctan2(t3, t4))
         
         return roll_x, pitch_y, yaw_z # in radians
 
