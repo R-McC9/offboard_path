@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+import numpy as np
+import math
 import rclpy
 from rclpy.clock import Clock
 from rclpy.node import Node
@@ -53,16 +55,23 @@ class OffboardControl(Node):
 
         self.goal = [0.0, 0.0, -10.0]
 
+        self.prev_err_x = 0.0
+        self.err_sum_x = 0.0
+
+        self.prev_err_y = 0.0
+        self.err_sum_y = 0.0
+
         self.prev_err_z = 0.0
         self.err_sum_z = 0.0
 
     def vehicle_odometry_callback(self, msg):
         """Callbackfunction for vehicle_odometry topic subscriber."""
         x, y, z = msg.position
+        q = [0.6586, 0.0011, -0.0085, 0.7524]
 
-        kp = 1.0
-        ki = 0.0001
-        kd = 10
+        kp = 0.7
+        ki = 0.001
+        kd = 30
 
         # Altitude controller
         err_z = self.goal[2] - z
@@ -84,8 +93,50 @@ class OffboardControl(Node):
 
         self.prev_err_z = err_z
 
-        body_thrust = [0.0, 0.0, U_z]
-        self.publish_attitude_setpoint(0.0, 0.0, 0.0, body_thrust)
+        # X, Y position control
+        err_x = self.goal[0] - x
+        err_y = self.goal[1] - y
+
+        self.err_sum_x += err_x
+        self.err_sum_y += err_y
+
+        err_dif_x = err_x - self.prev_err_x
+        err_dif_y = err_y - self.prev_err_y
+
+        U_x = kp * err_x + ki * self.err_sum_x + kd * err_dif_x
+        U_y = kp * err_y + ki * self.err_sum_y + kd * err_dif_y
+
+        self.prev_err_x = err_x
+        self.prev_err_y = err_y
+
+        # Clamp integral error term when motors are saturated
+        if U_x <= -1.0:
+            U_x = -1.0
+            self.err_sum_x = 0
+
+        if U_x >= 1.0:
+            U_x = 1.0
+            self.err_sum_x = 0
+
+        self.prev_err_x = err_x
+
+        # Clamp integral error term when motors are saturated
+        if U_y <= -1.0:
+            U_y = -1.0
+            self.err_sum_y = 0
+
+        if U_y >= 1.0:
+            U_y = 1.0
+            self.err_sum_y = 0
+
+        self.prev_err_y = err_y
+
+        q_d = q
+        thrust_sum = math.sqrt(U_x**2 + U_y**2 + U_z**2)
+        body_thrust_norm = [U_x/thrust_sum, U_y/thrust_sum, U_z/thrust_sum]
+        self.publish_attitude_setpoint(q_d, body_thrust_norm)
+        #self.publish_attitude_setpoint(q_d, [0.0, 0.0, U_z])
+        #print(body_thrust_norm)
 
     def vehicle_status_callback(self, vehicle_status):
         """Callback function for vehicle_status topic subscriber."""
@@ -134,13 +185,13 @@ class OffboardControl(Node):
         self.trajectory_setpoint_publisher.publish(msg)
         self.get_logger().info(f"Publishing position setpoints {[x, y, z]}")
 
-    def publish_attitude_setpoint(self, roll_body, pitch_body, yaw_body, thrust_body):
+    def publish_attitude_setpoint(self, q_d, thrust_body):
         """Publish attitude setpoint."""
         msg = VehicleAttitudeSetpoint()
-        msg.roll_body = roll_body
-        msg.pitch_body = pitch_body
-        msg.yaw_body = yaw_body
-        #msg.q_d = q #Desired quaternion orientation for quaternion based control
+        # msg.roll_body = roll_body
+        # msg.pitch_body = pitch_body
+        # msg.yaw_body = yaw_body
+        msg.q_d = q_d #Desired quaternion orientation for quaternion based control
         msg.thrust_body = thrust_body
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.attitude_setpoint_publisher.publish(msg)
