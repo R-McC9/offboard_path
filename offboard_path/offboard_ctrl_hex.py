@@ -104,7 +104,7 @@ class OffboardControl(Node):
         err_y = self.goal[1] - y
 
         # Determine position of reference in the body frame
-        err_x_body, err_y_body = self.world_err_to_body_err(yaw_meas, err_x, err_y)
+        err_x_body, err_y_body = self.world_err_to_body_err(-1*yaw_meas, err_x, err_y)
 
         self.err_sum_x += err_x_body
         self.err_sum_y += err_y_body
@@ -112,41 +112,37 @@ class OffboardControl(Node):
         err_dif_x = err_x_body - self.prev_err_x
         err_dif_y = err_y_body - self.prev_err_y
 
-        U_x = (kp * err_x_body + ki * self.err_sum_x + kd * err_dif_x)
+        U_x = -1*(kp * err_x_body + ki * self.err_sum_x + kd * err_dif_x)
         U_y = (kp * err_y_body + ki * self.err_sum_y + kd * err_dif_y)
 
         self.prev_err_x = err_x_body
         self.prev_err_y = err_y_body
 
         # Clamp integral error term when motors are saturated
-        if U_x <= -0.01:
-            U_x = -0.01
+        if U_x <= -0.1:
+            U_x = -0.1
             self.err_sum_x = 0
 
-        if U_x >= 0.01:
-            U_x = 0.01
+        if U_x >= 0.1:
+            U_x = 0.1
             self.err_sum_x = 0
-
-        self.prev_err_x = err_x
 
         # Clamp integral error term when motors are saturated
-        if U_y <= -0.01:
-            U_y = -0.01
+        if U_y <= -0.1:
+            U_y = -0.1
             self.err_sum_y = 0
 
-        if U_y >= 0.01:
-            U_y = 0.01
+        if U_y >= 0.1:
+            U_y = 0.1
             self.err_sum_y = 0
-
-        self.prev_err_y = err_y
 
         q_d = q
         thrust_sum = math.sqrt(U_x**2 + U_y**2 + U_z**2)
         body_thrust_norm = [U_x/thrust_sum, U_y/thrust_sum, U_z/thrust_sum]
         #self.publish_attitude_setpoint(q_d, body_thrust_norm)
-        self.publish_attitude_setpoint(q_d, [U_x, U_y, U_z])
+        self.publish_attitude_setpoint(q_d, [U_y, U_x, U_z])
         #print(body_thrust_norm)
-        print(err_x, err_x_body, U_x)
+        print(roll_meas, pitch_meas, yaw_meas)
 
     def world_err_to_body_err(self, yaw_meas, err_x, err_y):
         x_err_body = math.cos(yaw_meas)*err_x - math.sin(yaw_meas)*err_y
