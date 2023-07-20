@@ -3,6 +3,7 @@
 from time import sleep
 import math
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 
 import rclpy
 from rclpy.clock import Clock
@@ -54,13 +55,13 @@ class OffboardControl(Node):
 
         # Position controller
         # roll/pitch setpoint (body frame)
-        self.kpx = 1.0
-        self.kix = 0.000000001
-        self.kdx = 10.0
+        self.kpx = 0.8
+        self.kix = 0.000001
+        self.kdx = 20.0
 
-        self.kpy = 1.0
+        self.kpy = 0.8
         self.kiy = 0.000000001
-        self.kdy = 10.0
+        self.kdy = 20.0
 
         # rates setpoints
         self.kpr = 0.0000005
@@ -111,7 +112,7 @@ class OffboardControl(Node):
 
         # Get current orientation (quaternion)
         # Drone is in NED frame (does this matter??)
-        w, i, j, k = msg.q
+        i, j, k, w = msg.q
 
         # Nested PID loops for x,y position tracking using pitch/roll/yaw rates
         # If we could thrust in all directions (omnidirectional) then this could work by default just using U_x and U_y, would just need to control attitude then.
@@ -133,7 +134,8 @@ class OffboardControl(Node):
 
         # Need pitch and roll setpoints for translation
         # Convert quaternion orientation to euler anglesn (radians)
-        roll_meas, pitch_meas, yaw_meas = self.euler_from_quaternion(w, i, j, k)
+        rpy = R.from_quat([i, j, k, w])
+        yaw_meas, pitch_meas, roll_meas = rpy.as_euler('zyx', degrees=False)
 
         # Determine position of reference in the body frame
         err_x_body, err_y_body = self.world_err_to_body_err(yaw_meas, err_x, err_y)
@@ -209,7 +211,7 @@ class OffboardControl(Node):
 
         err_dif_pitch = pitch_err - self.prev_err_pitch
 
-        pitch_rate = self.kpp * pitch_err + self.kip * self.err_sum_pitch + self.kdp * err_dif_pitch
+        pitch_rate = (self.kpp * pitch_err + self.kip * self.err_sum_pitch + self.kdp * err_dif_pitch)
 
         if pitch_rate <= -0.1:
             pitch_rate = -0.1
@@ -280,7 +282,9 @@ class OffboardControl(Node):
         # if msg.err_z <= 0.01:
         #     self.update_goal() 
 
-        print(yaw_meas, yaw_err, yaw_rate)
+        #print(yaw_meas, yaw_err, yaw_rate)
+        #print(x,y,z)
+        print(err_x_body, roll_ref, roll_meas, roll_rate)
 
     def update_goal(self):
         """Takes in the current timestamp and updates the goal position accordingly"""
@@ -288,25 +292,25 @@ class OffboardControl(Node):
         # May consider also including the goal velocity
         self.goal = [0.0, 0.0, -10 + 2*math.sin(int(self.get_clock().now().nanoseconds / 1000)*0.000001)]
 
-    def euler_from_quaternion(self, w, i, j, k):
-        jsqr = j * j
+    # def euler_from_quaternion(self, w, i, j, k):
+    #     jsqr = j * j
        
-        t0 = +2.0 * (w * i + j * k)
-        t1 = +1.0 - 2.0 * (i * i + jsqr)
-        roll_x = np.degrees(np.arctan2(t0, t1))
+    #     t0 = +2.0 * (w * i + j * k)
+    #     t1 = +1.0 - 2.0 * (i * i + jsqr)
+    #     roll_x = np.degrees(np.arctan2(t0, t1))
         
-        t2 = +2.0 * (w * j - k * i)
-        # t2 = +1.0 if t2 > +1.0 else t2
-        # t2 = -1.0 if t2 < -1.0 else t2
-        t2 = np.where(t2>+1.0, +1.0, t2)
-        t2 = np.where(t2<-1.0, -1.0, t2)
-        pitch_y = np.degrees(np.arcsin(t2))
+    #     t2 = +2.0 * (w * j - k * i)
+    #     # t2 = +1.0 if t2 > +1.0 else t2
+    #     # t2 = -1.0 if t2 < -1.0 else t2
+    #     t2 = np.where(t2>+1.0, +1.0, t2)
+    #     t2 = np.where(t2<-1.0, -1.0, t2)
+    #     pitch_y = np.degrees(np.arcsin(t2))
         
-        t3 = +2.0 * (w * k + i * j)
-        t4 = +1.0 - 2.0 * (jsqr + k * k)
-        yaw_z = np.degrees(np.arctan2(t3, t4))
+    #     t3 = +2.0 * (w * k + i * j)
+    #     t4 = +1.0 - 2.0 * (jsqr + k * k)
+    #     yaw_z = np.degrees(np.arctan2(t3, t4))
         
-        return roll_x, pitch_y, yaw_z # in radians
+    #     return roll_x, pitch_y, yaw_z # in radians
 
     def world_err_to_body_err(self, yaw_meas, err_x, err_y):
         x_err_body = math.cos(yaw_meas)*err_x - math.sin(yaw_meas)*err_y

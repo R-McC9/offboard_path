@@ -2,6 +2,7 @@
 
 import numpy as np
 import math
+from scipy.spatial.transform import Rotation as R
 import rclpy
 from rclpy.clock import Clock
 from rclpy.node import Node
@@ -94,39 +95,47 @@ class OffboardControl(Node):
         self.prev_err_z = err_z
 
         # X, Y position control
+        # Convert to body frame from world frame
+        # Convert quaternion orientation to euler anglesn (radians)
+        rpy = R.from_quat(msg.q)
+        yaw_meas, pitch_meas, roll_meas = rpy.as_euler('zyx', degrees=False)
+
         err_x = self.goal[0] - x
         err_y = self.goal[1] - y
 
-        self.err_sum_x += err_x
-        self.err_sum_y += err_y
+        # Determine position of reference in the body frame
+        err_x_body, err_y_body = self.world_err_to_body_err(yaw_meas, err_x, err_y)
 
-        err_dif_x = err_x - self.prev_err_x
-        err_dif_y = err_y - self.prev_err_y
+        self.err_sum_x += err_x_body
+        self.err_sum_y += err_y_body
 
-        U_x = kp * err_x + ki * self.err_sum_x + kd * err_dif_x
-        U_y = kp * err_y + ki * self.err_sum_y + kd * err_dif_y
+        err_dif_x = err_x_body - self.prev_err_x
+        err_dif_y = err_y_body - self.prev_err_y
 
-        self.prev_err_x = err_x
-        self.prev_err_y = err_y
+        U_x = (kp * err_x_body + ki * self.err_sum_x + kd * err_dif_x)
+        U_y = (kp * err_y_body + ki * self.err_sum_y + kd * err_dif_y)
 
-        # Clamp integral error term when motors are saturated
-        if U_x <= -1.0:
-            U_x = -1.0
-            self.err_sum_x = 0
-
-        if U_x >= 1.0:
-            U_x = 1.0
-            self.err_sum_x = 0
-
-        self.prev_err_x = err_x
+        self.prev_err_x = err_x_body
+        self.prev_err_y = err_y_body
 
         # Clamp integral error term when motors are saturated
-        if U_y <= -1.0:
-            U_y = -1.0
+        if U_x <= -0.01:
+            U_x = -0.01
+            self.err_sum_x = 0
+
+        if U_x >= 0.01:
+            U_x = 0.01
+            self.err_sum_x = 0
+
+        self.prev_err_x = err_x
+
+        # Clamp integral error term when motors are saturated
+        if U_y <= -0.01:
+            U_y = -0.01
             self.err_sum_y = 0
 
-        if U_y >= 1.0:
-            U_y = 1.0
+        if U_y >= 0.01:
+            U_y = 0.01
             self.err_sum_y = 0
 
         self.prev_err_y = err_y
@@ -134,9 +143,15 @@ class OffboardControl(Node):
         q_d = q
         thrust_sum = math.sqrt(U_x**2 + U_y**2 + U_z**2)
         body_thrust_norm = [U_x/thrust_sum, U_y/thrust_sum, U_z/thrust_sum]
-        self.publish_attitude_setpoint(q_d, body_thrust_norm)
-        #self.publish_attitude_setpoint(q_d, [0.0, 0.0, U_z])
+        #self.publish_attitude_setpoint(q_d, body_thrust_norm)
+        self.publish_attitude_setpoint(q_d, [U_x, U_y, U_z])
         #print(body_thrust_norm)
+        print(err_x, err_x_body, U_x)
+
+    def world_err_to_body_err(self, yaw_meas, err_x, err_y):
+        x_err_body = math.cos(yaw_meas)*err_x - math.sin(yaw_meas)*err_y
+        y_err_body = math.sin(yaw_meas)*err_x + math.cos(yaw_meas)*err_y
+        return x_err_body, y_err_body
 
     def vehicle_status_callback(self, vehicle_status):
         """Callback function for vehicle_status topic subscriber."""
@@ -236,8 +251,13 @@ class OffboardControl(Node):
 def main(args=None) -> None:
     print('Starting offboard control node...')
     rclpy.init(args=args)
-    offboard_control = OffboardControl()
-    rclpy.spin(offboard_control)
+    try:
+        offboard_control = OffboardControl()
+        rclpy.spin(offboard_control)
+    except KeyboardInterrupt:
+        offboard_control.get_logger().info('Keyboard interrupt, shutting down.\n')
+
+    offboard_control.land()
     offboard_control.destroy_node()
     rclpy.shutdown()
 
