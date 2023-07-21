@@ -1,23 +1,25 @@
 #!/usr/bin/env python
 
-from time import sleep
-
+import numpy as np
+import math
+from scipy.spatial.transform import Rotation as R
 import rclpy
 from rclpy.clock import Clock
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
 from px4_msgs.msg import (OffboardControlMode, TrajectorySetpoint,
-                          VehicleCommand, VehicleControlMode, VehicleOdometry,
-                          VehicleRatesSetpoint)
+                          VehicleCommand, VehicleControlMode,
+                          VehicleLocalPosition, VehicleStatus,
+                          VehicleOdometry, VehicleAttitudeSetpoint)
 
 class OffboardControl(Node):
+    """Node for controlling vehicle in offboard mode"""
 
-    def __init__(self):
-        # Create node and publishers/subscribers
-        super().__init__('Offboard_Ctrl')
+    def __init__(self) -> None:
+        super().__init__('offboard_control_hex')
 
-        #Need custom QoS profile!!!!!
+        # Configure QoS profile for publishing and subscribing
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -25,184 +27,235 @@ class OffboardControl(Node):
             depth=1
         )
 
-        self.offboard_control_mode_publisher_ = self.create_publisher(OffboardControlMode, "/fmu/in/offboard_control_mode", qos_profile)
-        self.trajectory_setpoint_publisher_ = self.create_publisher(TrajectorySetpoint, "/fmu/in/trajectory_setpoint", qos_profile)
-        self.rates_setpoint_publisher_ = self.create_publisher(VehicleRatesSetpoint, "/fmu/in/vehicle_rates_setpoint", qos_profile)
-        self.vehicle_command_publisher_ = self.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", qos_profile)
+        # Create Publishers
+        self.offboard_control_mode_publisher = self.create_publisher(
+            OffboardControlMode, '/fmu/in/offboard_control_mode', qos_profile)
+        self.trajectory_setpoint_publisher = self.create_publisher(
+            TrajectorySetpoint, '/fmu/in/trajectory_setpoint', qos_profile)
+        self.attitude_setpoint_publisher = self.create_publisher(
+            VehicleAttitudeSetpoint, '/fmu/in/vehicle_attitude_setpoint', qos_profile)
+        self.vehicle_command_publisher = self.create_publisher(
+            VehicleCommand, '/fmu/in/vehicle_command', qos_profile)
 
-        # self.timesync_sub_ = self.create_subscription(TimesyncStatus, "/fmu/out/timesync_status", 10)
+        # Create Subscribers
+        # self.vehicle_local_position_subscriber = self.create_subscription(
+        #     VehicleLocalPosition, '/fmu/out/vehicle_local_position', self.vehicle_local_position_callback, qos_profile)
+        self.vehicle_odometry_subscriber = self.create_subscription(
+            VehicleOdometry, '/fmu/out/vehicle_odometry', self.vehicle_odometry_callback, qos_profile)
+        self.vehicle_status_subscriber = self.create_subscription(
+            VehicleStatus, '/fmu/out/vehicle_status', self.vehicle_status_callback, qos_profile)
 
-        self.vehicle_odometry_subscriber_ = self.create_subscription(VehicleOdometry, "/fmu/out/vehicle_odometry", self.odometry_callback, qos_profile)
-
+        # Initialize variables
         self.offboard_setpoint_counter = 0
+        self.vehicle_local_position = VehicleLocalPosition()
+        self.vehicle_status = VehicleStatus()
 
-        timer_period = 0.1
-        self.timer_ = self.create_timer(timer_period, self.timer_callback)
+        # Create a timer to publish commands
+        self.timer = self.create_timer(0.1, self.timer_callback)
 
-        #PID controller parameters
-        self.kp = 0.3
-        self.ki = 0.000001
-        self.kd = 5.0
-        #INstantiate PID controller variables
+        self.goal = [0.0, 0.0, -10.0]
+
         self.prev_err_x = 0.0
-        self.prev_err_y = 0.0
-        self.prev_err_z = 0.0
-
         self.err_sum_x = 0.0
+
+        self.prev_err_y = 0.0
         self.err_sum_y = 0.0
+
+        self.prev_err_z = 0.0
         self.err_sum_z = 0.0
 
-        self.goal = [0.0, 0.0, -6.0]
-
-    def odometry_callback(self, msg):
-        #recieves odometry data, does PID control math, publishes correct thrust and angular rates
-        #self.get_logger().info('Recieveing messages from odometry topic, %s' % msg.position)
-
-        #Get current position
+    def vehicle_odometry_callback(self, msg):
+        """Callbackfunction for vehicle_odometry topic subscriber."""
         x, y, z = msg.position
+        w, i, j, k = msg.q
 
-        #Get current orientation (quaternion)
-        q, i, j, k = msg.q
+        kp = 0.7
+        ki = 0.001
+        kd = 30
 
-        #Compute current error
+        # X, Y position control
+        # Convert to body frame from world frame
+        # Convert quaternion orientation to euler anglesn (radians)
+        rpy = R.from_quat([i, j, k, w])
+        #roll_meas, pitch_meas, yaw_meas = rpy.as_euler('XYZ', degrees=False)
+
         err_x = self.goal[0] - x
         err_y = self.goal[1] - y
         err_z = self.goal[2] - z
-        #Compute error sum for integral term
-        self.err_sum_x += err_x
-        self.err_sum_y += err_y
-        self.err_sum_z += err_z
-        #Compute error difference for derivative term
-        err_dif_x = err_x - self.prev_err_x
-        err_dif_y = err_y - self.prev_err_y
-        err_dif_z = err_z - self.prev_err_z
-        #Compute control inputs
-        U_x = self.kp * err_x + self.ki * self.err_sum_x + self.kd * err_dif_x
-        U_y = self.kp * err_y + self.ki * self.err_sum_y + self.kd * err_dif_y
-        U_z = self.kp * err_z + self.ki * self.err_sum_z + self.kd * err_dif_z
 
-        if U_x <= -1.0:
-            #When saturated lock integral term 
-            U_x = -1.0
-            self.err_sum_x = 0
+        # Determine position of reference in the body frame
+        # err_x_body, err_y_body = self.world_err_to_body_err(yaw_meas, err_x, err_y)
 
-        if U_x >= 1.0:
-            U_x = 1.0
-            self.err_sum_x = 0
+        err_x_body, err_y_body, err_z_body = self.world_err_to_body_err(rpy, np.array([err_x, err_y, err_z]))
 
-        if U_y <= -1.0:
-            #When saturated lock integral term 
-            U_y = -1.0
-            self.err_sum_y = 0
+        # Altitude controller
+        self.err_sum_z += err_z_body
 
-        if U_y >= 1.0:
-            U_y = 1.0
-            self.err_sum_y = 0
+        err_dif_z = err_z_body - self.prev_err_z
 
-        if U_z <= -1.0:
-            #When saturated lock integral term 
-            U_z = -1.0
+        U_z = kp * err_z_body + ki * self.err_sum_z + kd * err_dif_z
+
+        # Clamp integral error term when motors are saturated
+        if U_z <= -0.6:
+            U_z = -0.6
             self.err_sum_z = 0
 
-        if U_z >= 1.0:
-            U_z = 1.0
+        if U_z >= 0.6:
+            U_z = 0.6
             self.err_sum_z = 0
 
-        thrust_rates = [U_x, U_y, U_z]
-        print(U_x)
+        self.prev_err_z = err_z_body
 
-        self.prev_err_x = err_x
-        self.prev_err_y = err_y
-        self.prev_err_z = err_z
+        # X,Y position controller
+        self.err_sum_x += err_x_body
+        self.err_sum_y += err_y_body
 
-        ang_rates = [0.0, 0.0, 0.0]
+        err_dif_x = err_x_body - self.prev_err_x
+        err_dif_y = err_y_body - self.prev_err_y
 
-        #Compute thrust input using PID controller math
-        #print(self.U_z)
-        self.publish_rates_setpoint(ang_rates, thrust_rates)
-        
+        U_x = kp * err_x_body + ki * self.err_sum_x + kd * err_dif_x
+        U_y = kp * err_y_body + ki * self.err_sum_y + kd * err_dif_y
 
-    def timer_callback(self):
-        if (self.offboard_setpoint_counter == 10):
-            # Change to offboard mode after 10 setpoints
-            self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1., 6.)
-            # Arm the vehicle
-            self.arm()
+        self.prev_err_x = err_x_body
+        self.prev_err_y = err_y_body
 
-        self.publish_offboard_control_mode()
-        #self.publish_trajectory_setpoint([0.0, 0.0, -3.0])
-        #self.publish_rates_setpoint(None, -1.0)
+        # Clamp integral error term when motors are saturated
+        if U_x <= -0.6:
+            U_x = -0.6
+            self.err_sum_x = 0
 
-        # Stop counter after reaching 11
-        if (self.offboard_setpoint_counter < 11):
-            self.offboard_setpoint_counter += 1
+        if U_x >= 0.6:
+            U_x = 0.6
+            self.err_sum_x = 0
+
+        # Clamp integral error term when motors are saturated
+        if U_y <= -0.6:
+            U_y = -0.6
+            self.err_sum_y = 0
+
+        if U_y >= 0.6:
+            U_y = 0.6
+            self.err_sum_y = 0
+
+        q_d = [1.0, 0.0, 0.0, 0.0]
+        # thrust_sum = math.sqrt(U_x**2 + U_y**2 + U_z**2)
+        # body_thrust_norm = [U_x/thrust_sum, U_y/thrust_sum, U_z/thrust_sum]
+        # self.publish_attitude_setpoint(q_d, body_thrust_norm)
+        self.publish_attitude_setpoint(q_d, [U_x, U_y, U_z])
+        print(err_z, err_z_body, z, U_z)
+
+    # def world_err_to_body_err(self, yaw_meas, err_x, err_y):
+    #     x_err_body = math.cos(yaw_meas)*err_x - math.sin(yaw_meas)*err_y
+    #     y_err_body = math.sin(yaw_meas)*err_x + math.cos(yaw_meas)*err_y
+    #     return x_err_body, y_err_body
+
+    def world_err_to_body_err(self, rpy, err_array):
+        err_x_body, err_y_body, err_z_body = np.matmul(rpy.as_matrix(), err_array)
+        return err_x_body, err_y_body, err_z_body
+
+    def vehicle_status_callback(self, vehicle_status):
+        """Callback function for vehicle_status topic subscriber."""
+        self.vehicle_status = vehicle_status
 
     def arm(self):
-        self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
-        self.get_logger().info("Arm command send")
+        """Send an arm command to the vehicle."""
+        self.publish_vehicle_command(
+            VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=1.0)
+        self.get_logger().info('Arm command sent')
 
     def disarm(self):
-        self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0)
-        self.get_logger().info("Disarm command send")
+        """Send a disarm command to the vehicle."""
+        self.publish_vehicle_command(
+            VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=0.0)
+        self.get_logger().info('Disarm command sent')
+
+    def engage_offboard_mode(self):
+        """Switch to offboard mode."""
+        self.publish_vehicle_command(
+            VehicleCommand.VEHICLE_CMD_DO_SET_MODE, param1=1.0, param2=6.0)
+        self.get_logger().info("Switching to offboard mode")
 
     def land(self):
-        self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_NAV_LAND, 21.)
-        sleep(3)
+        """Switch to land mode."""
+        self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
+        self.get_logger().info("Switching to land mode")
 
-    def publish_offboard_control_mode(self):
+    def publish_offboard_control_heartbeat_signal(self):
+        """Publish the offboard control mode."""
         msg = OffboardControlMode()
         msg.position = False
         msg.velocity = False
         msg.acceleration = False
-        msg.attitude = False
-        msg.body_rate = True
-        msg.timestamp = int(Clock().now().nanoseconds / 1000)
-        self.offboard_control_mode_publisher_.publish(msg)
+        msg.attitude = True
+        msg.body_rate = False
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        self.offboard_control_mode_publisher.publish(msg)
 
-    def publish_trajectory_setpoint(self, desiredXYZ):
+    def publish_position_setpoint(self, x: float, y: float, z: float):
+        """Publish the trajectory setpoint."""
         msg = TrajectorySetpoint()
-        msg.position = desiredXYZ
-        msg.yaw = 0.0
-        msg.timestamp = int(Clock().now().nanoseconds / 1000)
-        self.trajectory_setpoint_publisher_.publish(msg)
+        msg.position = [x, y, z]
+        msg.yaw = 1.57079  # (90 degree)
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        self.trajectory_setpoint_publisher.publish(msg)
+        self.get_logger().info(f"Publishing position setpoints {[x, y, z]}")
 
-    def publish_rates_setpoint(self, ang_rates, thrust_rates):
-        msg = VehicleRatesSetpoint()
-        msg.roll = ang_rates[0]
-        msg.yaw = ang_rates[1]
-        msg.pitch = ang_rates[2]
-        #msg.thrust_body = [0.0, 0.0, thrust_rates[2]]
-        msg.thrust_body = thrust_rates
-        self.rates_setpoint_publisher_.publish(msg)
+    def publish_attitude_setpoint(self, q_d, thrust_body):
+        """Publish attitude setpoint."""
+        msg = VehicleAttitudeSetpoint()
+        # msg.roll_body = roll_body
+        # msg.pitch_body = pitch_body
+        # msg.yaw_body = yaw_body
+        msg.q_d = q_d #Desired quaternion orientation for quaternion based control
+        msg.thrust_body = thrust_body
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        self.attitude_setpoint_publisher.publish(msg)
 
-    def publish_vehicle_command(self, command, param1=0.0, param2=0.0):
+    def publish_vehicle_command(self, command, **params) -> None:
+        """Publish a vehicle command."""
         msg = VehicleCommand()
-        msg.param1 = param1
-        msg.param2 = param2
         msg.command = command
+        msg.param1 = params.get("param1", 0.0)
+        msg.param2 = params.get("param2", 0.0)
+        msg.param3 = params.get("param3", 0.0)
+        msg.param4 = params.get("param4", 0.0)
+        msg.param5 = params.get("param5", 0.0)
+        msg.param6 = params.get("param6", 0.0)
+        msg.param7 = params.get("param7", 0.0)
         msg.target_system = 1
         msg.target_component = 1
         msg.source_system = 1
         msg.source_component = 1
         msg.from_external = True
-        msg.timestamp = int(Clock().now().nanoseconds / 1000)
-        self.vehicle_command_publisher_.publish(msg)        
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        self.vehicle_command_publisher.publish(msg)
 
-def main(args=None):
+    def timer_callback(self) -> None:
+        """Callback function for the timer."""
+        self.publish_offboard_control_heartbeat_signal()
+
+        if self.offboard_setpoint_counter == 10:
+            self.engage_offboard_mode()
+            self.arm()
+
+        if self.offboard_setpoint_counter < 11:
+            self.offboard_setpoint_counter += 1
+
+def main(args=None) -> None:
+    print('Starting offboard control node...')
     rclpy.init(args=args)
-    offboard_control = OffboardControl()
-
     try:
-        offboard_control.get_logger().info('Starting offboard control node, shut down with CTRL-C')
+        offboard_control = OffboardControl()
         rclpy.spin(offboard_control)
     except KeyboardInterrupt:
         offboard_control.get_logger().info('Keyboard interrupt, shutting down.\n')
-    #Execute Landing
+
     offboard_control.land()
-    #Destroy node explicitly on keyboard interrupt
     offboard_control.destroy_node()
     rclpy.shutdown()
 
-
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(e)

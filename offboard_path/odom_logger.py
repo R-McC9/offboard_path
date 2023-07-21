@@ -30,37 +30,30 @@ class OdomListener(Node):
             qos_profile)
         self.odometry_listener_
 
+        self.goal = [1.0, 1.0, -5]
+
     def odometry_callback(self, msg):
+        x, y, z = msg.position
         w, i, j, k = msg.q
         rpy = R.from_quat([i, j, k, w])
-        yaw_meas, pitch_meas, roll_meas = rpy.as_euler('zyx', degrees=False)
-        print(roll_meas, pitch_meas, yaw_meas)
+        # roll_meas, pitch_meas, yaw_meas = rpy.as_euler('XYZ', degrees=False)
+        # print(roll_meas, pitch_meas, yaw_meas)
+        print(msg.q)
 
+        # Error in the world frame (Orientation does not matter here)
+        err_x = self.goal[0] - x
+        err_y = self.goal[1] - y
+        err_z = self.goal[2] - z
 
-    # def euler_from_quaternion(self, w, i, j, k):
-    #     jsqr = j * j
-       
-    #     t0 = +2.0 * (w * i + j * k)
-    #     t1 = +1.0 - 2.0 * (i * i + jsqr)
-    #     roll_x = np.degrees(np.arctan2(t0, t1))
-        
-    #     t2 = +2.0 * (w * j - k * i)
-    #     # t2 = +1.0 if t2 > +1.0 else t2
-    #     # t2 = -1.0 if t2 < -1.0 else t2
-    #     t2 = np.where(t2>+1.0, +1.0, t2)
-    #     t2 = np.where(t2<-1.0, -1.0, t2)
-    #     pitch_y = np.degrees(np.arcsin(t2))
-        
-    #     t3 = +2.0 * (w * k + i * j)
-    #     t4 = +1.0 - 2.0 * (jsqr + k * k)
-    #     yaw_z = np.degrees(np.arctan2(t3, t4))
-        
-    #     return roll_x, pitch_y, yaw_z # in radians
+        # Error in the body frame (Orientation does matter)
+        # Use rotation matrix from quaternion orientation to convert to body frame
+        err_x_body, err_y_body, err_z_body = self.world_err_to_body_err(rpy, np.array([err_x, err_y, err_z]))
 
-    def world_err_to_body_err(self, yaw_meas, err_x, err_y):
-        x_err_body = math.cos(yaw_meas)*err_x - math.sin(yaw_meas)*err_y
-        y_err_body = math.sin(yaw_meas)*err_x + math.cos(yaw_meas)*err_y
-        return x_err_body, y_err_body
+        #print(err_x_body, err_y_body, err_z_body)
+
+    def world_err_to_body_err(self, rpy, err_array):
+        err_x_body, err_y_body, err_z_body = np.dot(rpy.as_matrix(), err_array)
+        return err_x_body, err_y_body, err_z_body
 
 def main(args=None):
     rclpy.init(args=args)

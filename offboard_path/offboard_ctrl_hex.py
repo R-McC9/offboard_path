@@ -49,7 +49,6 @@ class OffboardControl(Node):
         self.offboard_setpoint_counter = 0
         self.vehicle_local_position = VehicleLocalPosition()
         self.vehicle_status = VehicleStatus()
-        self.takeoff_height = -5.0
 
         # Create a timer to publish commands
         self.timer = self.create_timer(0.1, self.timer_callback)
@@ -142,7 +141,7 @@ class OffboardControl(Node):
         #self.publish_attitude_setpoint(q_d, body_thrust_norm)
         self.publish_attitude_setpoint(q_d, [U_y, U_x, U_z])
         #print(body_thrust_norm)
-        print(roll_meas, pitch_meas, yaw_meas)
+        print(x, y)
 
     def world_err_to_body_err(self, yaw_meas, err_x, err_y):
         x_err_body = math.cos(yaw_meas)*err_x - math.sin(yaw_meas)*err_y
@@ -233,13 +232,6 @@ class OffboardControl(Node):
         if self.offboard_setpoint_counter == 10:
             self.engage_offboard_mode()
             self.arm()
-
-        # if self.vehicle_local_position.z > self.takeoff_height and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
-        #     self.publish_position_setpoint(0.0, 0.0, self.takeoff_height)
-
-        # elif self.vehicle_local_position.z <= self.takeoff_height:
-        #     self.land()
-        #     exit(0)
 
         if self.offboard_setpoint_counter < 11:
             self.offboard_setpoint_counter += 1
