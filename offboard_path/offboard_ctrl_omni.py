@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from turtle import position
 import numpy as np
 import math
 from scipy.spatial.transform import Rotation as R
@@ -55,9 +56,10 @@ class OffboardControl(Node):
         self.vehicle_status = VehicleStatus()
 
         # Create a timer to publish commands
+        self.now = 0.0
         self.timer = self.create_timer(0.1, self.timer_callback)
 
-        self.goal = [1.0, 1.0, -10.0]
+        self.goal = [0.0, 0.0, -10.0]
 
         self.prev_err_x = 0.0
         self.err_sum_x = 0.0
@@ -74,9 +76,9 @@ class OffboardControl(Node):
         w, i, j, k = msg.q
         self.t0 = msg.timestamp
 
-        kp = 0.7
+        kp = 0.5
         ki = 0.001
-        kd = 30
+        kd = 10
 
         # X, Y position control
         # Convert to body frame from world frame
@@ -88,9 +90,7 @@ class OffboardControl(Node):
         err_y = self.goal[1] - y
         err_z = self.goal[2] - z
 
-        # Determine position of reference in the body frame
-        # err_x_body, err_y_body = self.world_err_to_body_err(yaw_meas, err_x, err_y)
-
+        # Determine location of the reference position in the body frame
         err_x_body, err_y_body, err_z_body = self.world_err_to_body_err(rpy, np.array([err_x, err_y, err_z]))
 
         # Altitude controller
@@ -146,8 +146,20 @@ class OffboardControl(Node):
         # thrust_sum = math.sqrt(U_x**2 + U_y**2 + U_z**2)
         # body_thrust_norm = [U_x/thrust_sum, U_y/thrust_sum, U_z/thrust_sum]
         # self.publish_attitude_setpoint(q_d, body_thrust_norm)
+
+        # # Compute variance in position to know that we've settled
+        # position_variance = self.goal - msg.position
+
+        # # Wait for craft to settle at starting position, then update goal position to trace the path
+        # if position_variance[2] < 0.01 and position_variance[2] > -0.01:
+        #     self.update_goal()
+
+        # print(position_variance)
+
+        # Publish control inputs
         self.publish_attitude_setpoint(self.q_d, [U_x, U_y, U_z])
-        self.publish_control_data(msg.position, msg.q,self.goal, self.q_d, [U_x, U_y, U_z], msg.velocity, msg.angular_velocity)
+        # Publish control data to different topic for graphing/debugging
+        self.publish_control_data(msg.position, msg.q, self.goal, self.q_d, [U_x, U_y, U_z], msg.velocity, msg.angular_velocity)
 
     def world_err_to_body_err(self, rpy, err_array):
         err_x_body, err_y_body, err_z_body = np.matmul(rpy.as_matrix(), err_array)
@@ -156,8 +168,22 @@ class OffboardControl(Node):
     def update_quaternion(self):
         """Updates quaternion setpoint for smooth attitude tracking."""
 
-    def update_goal(self):
+
+    def update_goal(self, time):
         """Updates position setpoint for smooth position tracking."""
+        # Fly a square with corners at (0,0), (5,0), (5,5), (0,5)
+        # should take 6 seconds per side
+        if time <= 8.0:
+            self.goal = [0.0 + time, 0.0, -10.0]
+        elif time >= 8.0 and time <= 16.0:
+            self.goal = [8.0, 0.0 + (time - 8), -10.0]
+        elif time >= 16.0 and time <= 24.0:
+            self.goal = [8.0 - (time - 16.0), 8.0, -10.0]
+        elif time >= 24.0 and time <= 32.0:
+            self.goal = [0.0, 8.0 - (time - 24.0), -10.0]
+        else:
+            self.goal = [0.0, 0.0, -10.0]
+        return self.goal
 
     def vehicle_status_callback(self, vehicle_status):
         """Callback function for vehicle_status topic subscriber."""
@@ -252,6 +278,9 @@ class OffboardControl(Node):
     def timer_callback(self) -> None:
         """Callback function for the timer."""
         self.publish_offboard_control_heartbeat_signal()
+        self.now += 0.1
+        # Uncomment this to follow a square trajctory
+        #self.update_goal(self.now)
 
         if self.offboard_setpoint_counter == 10:
             self.engage_offboard_mode()

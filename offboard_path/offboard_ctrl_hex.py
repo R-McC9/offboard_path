@@ -67,20 +67,31 @@ class OffboardControl(Node):
     def vehicle_odometry_callback(self, msg):
         """Callbackfunction for vehicle_odometry topic subscriber."""
         x, y, z = msg.position
-        q = [0.6586, 0.0011, -0.0085, 0.7524]
+        w, i, j, k = msg.q
 
         kp = 0.7
         ki = 0.001
         kd = 30
 
-        # Altitude controller
+        # X, Y position control
+        # Convert to body frame from world frame
+        # Convert quaternion orientation to euler anglesn (radians)
+        rpy = R.from_quat([i, j, k, w])
+        # yaw_meas, pitch_meas, roll_meas = rpy.as_euler('zyx', degrees=False)
+
+        err_x = self.goal[0] - x
+        err_y = self.goal[1] - y
         err_z = self.goal[2] - z
 
-        self.err_sum_z += err_z
+        # Determine position of reference in the body frame
+        err_x_body, err_y_body, err_z_body = self.world_err_to_body_err(rpy, np.array([err_x, err_y, err_z]))
 
-        err_dif_z = err_z - self.prev_err_z
+        # Altitude controller
+        self.err_sum_z += err_z_body
 
-        U_z = kp * err_z + ki * self.err_sum_z + kd * err_dif_z
+        err_dif_z = err_z_body - self.prev_err_z
+
+        U_z = kp * err_z_body + ki * self.err_sum_z + kd * err_dif_z
 
         # Clamp integral error term when motors are saturated
         if U_z <= -1.0:
@@ -91,19 +102,7 @@ class OffboardControl(Node):
             U_z = 1.0
             self.err_sum_z = 0
 
-        self.prev_err_z = err_z
-
-        # X, Y position control
-        # Convert to body frame from world frame
-        # Convert quaternion orientation to euler anglesn (radians)
-        rpy = R.from_quat(msg.q)
-        yaw_meas, pitch_meas, roll_meas = rpy.as_euler('zyx', degrees=False)
-
-        err_x = self.goal[0] - x
-        err_y = self.goal[1] - y
-
-        # Determine position of reference in the body frame
-        err_x_body, err_y_body = self.world_err_to_body_err(-1*yaw_meas, err_x, err_y)
+        self.prev_err_z = err_z_body
 
         self.err_sum_x += err_x_body
         self.err_sum_y += err_y_body
@@ -111,7 +110,7 @@ class OffboardControl(Node):
         err_dif_x = err_x_body - self.prev_err_x
         err_dif_y = err_y_body - self.prev_err_y
 
-        U_x = -1*(kp * err_x_body + ki * self.err_sum_x + kd * err_dif_x)
+        U_x = (kp * err_x_body + ki * self.err_sum_x + kd * err_dif_x)
         U_y = (kp * err_y_body + ki * self.err_sum_y + kd * err_dif_y)
 
         self.prev_err_x = err_x_body
@@ -135,18 +134,16 @@ class OffboardControl(Node):
             U_y = 0.1
             self.err_sum_y = 0
 
-        q_d = q
+        q_d = [1.0, 0.0, 0.0, 0.0]
         thrust_sum = math.sqrt(U_x**2 + U_y**2 + U_z**2)
         body_thrust_norm = [U_x/thrust_sum, U_y/thrust_sum, U_z/thrust_sum]
         #self.publish_attitude_setpoint(q_d, body_thrust_norm)
-        self.publish_attitude_setpoint(q_d, [U_y, U_x, U_z])
-        #print(body_thrust_norm)
-        print(x, y)
+        self.publish_attitude_setpoint(q_d, [U_x, U_y, U_z])
+        print(err_x_body, U_x)
 
-    def world_err_to_body_err(self, yaw_meas, err_x, err_y):
-        x_err_body = math.cos(yaw_meas)*err_x - math.sin(yaw_meas)*err_y
-        y_err_body = math.sin(yaw_meas)*err_x + math.cos(yaw_meas)*err_y
-        return x_err_body, y_err_body
+    def world_err_to_body_err(self, rpy, err_array):
+        err_x_body, err_y_body, err_z_body = np.matmul(rpy.as_matrix(), err_array)
+        return err_x_body, err_y_body, err_z_body
 
     def vehicle_status_callback(self, vehicle_status):
         """Callback function for vehicle_status topic subscriber."""
