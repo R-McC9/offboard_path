@@ -165,8 +165,10 @@ class OffboardControl(Node):
         err_x_body, err_y_body, err_z_body = np.matmul(rpy.as_matrix(), err_array)
         return err_x_body, err_y_body, err_z_body
 
-    def update_quaternion(self):
+    def update_quaternion(self, time):
         """Updates quaternion setpoint for smooth attitude tracking."""
+        #self.q_d = 
+        return self.q_d
 
 
     def update_goal(self, time):
@@ -288,6 +290,10 @@ class OffboardControl(Node):
 
         if self.offboard_setpoint_counter < 11:
             self.offboard_setpoint_counter += 1
+
+        if self.start_rotate == True:
+            self.now = 0
+            self.update_quaternion(self.now)
 
 def main(args=None) -> None:
     print('Starting offboard control node...')
