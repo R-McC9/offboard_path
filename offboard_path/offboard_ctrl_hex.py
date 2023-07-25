@@ -13,6 +13,8 @@ from px4_msgs.msg import (OffboardControlMode, TrajectorySetpoint,
                           VehicleLocalPosition, VehicleStatus,
                           VehicleOdometry, VehicleAttitudeSetpoint)
 
+from offboard_msgs.msg import ControlData
+
 class OffboardControl(Node):
     """Node for controlling vehicle in offboard mode"""
 
@@ -36,6 +38,8 @@ class OffboardControl(Node):
             VehicleAttitudeSetpoint, '/fmu/in/vehicle_attitude_setpoint', qos_profile)
         self.vehicle_command_publisher = self.create_publisher(
             VehicleCommand, '/fmu/in/vehicle_command', qos_profile)
+        self.control_data_publisher = self.create_publisher(
+            ControlData, '/ControlData', qos_profile)
 
         # Create Subscribers
         # self.vehicle_local_position_subscriber = self.create_subscription(
@@ -53,7 +57,7 @@ class OffboardControl(Node):
         # Create a timer to publish commands
         self.timer = self.create_timer(0.1, self.timer_callback)
 
-        self.goal = [0.0, 0.0, -10.0]
+        self.goal = [0.0, 0.0, -5.0]
 
         self.prev_err_x = 0.0
         self.err_sum_x = 0.0
@@ -69,9 +73,17 @@ class OffboardControl(Node):
         x, y, z = msg.position
         w, i, j, k = msg.q
 
-        kp = 0.7
-        ki = 0.001
-        kd = 30
+        kpz = 0.7
+        kiz = 0.001
+        kdz = 50
+
+        kpx = 0.7
+        kix = 0.001
+        kdx = 50
+
+        kpy = 0.5
+        kiy = 0.001
+        kdy = 30
 
         # X, Y position control
         # Convert to body frame from world frame
@@ -91,7 +103,7 @@ class OffboardControl(Node):
 
         err_dif_z = err_z_body - self.prev_err_z
 
-        U_z = kp * err_z_body + ki * self.err_sum_z + kd * err_dif_z
+        U_z = kpz * err_z_body + kiz * self.err_sum_z + kdz * err_dif_z
 
         # Clamp integral error term when motors are saturated
         if U_z <= -1.0:
@@ -110,8 +122,8 @@ class OffboardControl(Node):
         err_dif_x = err_x_body - self.prev_err_x
         err_dif_y = err_y_body - self.prev_err_y
 
-        U_x = (kp * err_x_body + ki * self.err_sum_x + kd * err_dif_x)
-        U_y = (kp * err_y_body + ki * self.err_sum_y + kd * err_dif_y)
+        U_x = (kpx * err_x_body + kix * self.err_sum_x + kdx * err_dif_x)
+        U_y = (kpy * err_y_body + kiy * self.err_sum_y + kdy * err_dif_y)
 
         self.prev_err_x = err_x_body
         self.prev_err_y = err_y_body
@@ -134,12 +146,9 @@ class OffboardControl(Node):
             U_y = 0.1
             self.err_sum_y = 0
 
-        q_d = [1.0, 0.0, 0.0, 0.0]
-        thrust_sum = math.sqrt(U_x**2 + U_y**2 + U_z**2)
-        body_thrust_norm = [U_x/thrust_sum, U_y/thrust_sum, U_z/thrust_sum]
-        #self.publish_attitude_setpoint(q_d, body_thrust_norm)
-        self.publish_attitude_setpoint(q_d, [U_x, U_y, U_z])
-        print(err_x_body, U_x)
+        self.q_d = [1.0, 0.0, 0.0, 0.0]
+        self.publish_attitude_setpoint(self.q_d, [U_x, U_y, U_z])
+        self.publish_control_data(msg.position, msg.q, self.goal, self.q_d, [U_x, U_y, U_z], msg.velocity, msg.angular_velocity)
 
     def world_err_to_body_err(self, rpy, err_array):
         err_x_body, err_y_body, err_z_body = np.matmul(rpy.as_matrix(), err_array)
@@ -221,6 +230,19 @@ class OffboardControl(Node):
         msg.from_external = True
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.vehicle_command_publisher.publish(msg)
+
+    def publish_control_data(self, pos, q, pos_d, q_d, thrust_body, vel, ang_vel):
+        """Publishes control data (pos/att, error, inputs, etc.) to ROS2 topic for analysis"""
+        msg = ControlData()
+        msg.position = pos
+        msg.q = q
+        msg.position_d = pos_d
+        msg.q_d = q_d
+        msg.velocity = vel
+        msg.angular_velocity = ang_vel
+        msg.body_thrust_inputs = thrust_body
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        self.control_data_publisher.publish(msg)
 
     def timer_callback(self) -> None:
         """Callback function for the timer."""

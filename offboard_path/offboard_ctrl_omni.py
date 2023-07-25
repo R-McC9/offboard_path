@@ -154,8 +154,6 @@ class OffboardControl(Node):
         # if position_variance[2] < 0.01 and position_variance[2] > -0.01:
         #     self.update_goal()
 
-        # print(position_variance)
-
         # Publish control inputs
         self.publish_attitude_setpoint(self.q_d, [U_x, U_y, U_z])
         # Publish control data to different topic for graphing/debugging
@@ -169,7 +167,6 @@ class OffboardControl(Node):
         """Updates quaternion setpoint for smooth attitude tracking."""
         #self.q_d = 
         return self.q_d
-
 
     def update_goal(self, time):
         """Updates position setpoint for smooth position tracking."""
@@ -291,9 +288,9 @@ class OffboardControl(Node):
         if self.offboard_setpoint_counter < 11:
             self.offboard_setpoint_counter += 1
 
-        if self.start_rotate == True:
-            self.now = 0
-            self.update_quaternion(self.now)
+        # if self.start_rotate == True:
+        #     self.now = 0
+        #     #self.update_quaternion(self.now)
 
 def main(args=None) -> None:
     print('Starting offboard control node...')
