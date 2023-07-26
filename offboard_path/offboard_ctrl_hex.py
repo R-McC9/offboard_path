@@ -78,7 +78,7 @@ class OffboardControl(Node):
         kdz = 50
 
         kpx = 0.7
-        kix = 0.001
+        kix = 0.0001
         kdx = 50
 
         kpy = 0.5
@@ -129,12 +129,12 @@ class OffboardControl(Node):
         self.prev_err_y = err_y_body
 
         # Clamp integral error term when motors are saturated
-        if U_x <= -0.1:
-            U_x = -0.1
+        if U_x <= -0.2:
+            U_x = -0.2
             self.err_sum_x = 0
 
-        if U_x >= 0.1:
-            U_x = 0.1
+        if U_x >= 0.2:
+            U_x = 0.2
             self.err_sum_x = 0
 
         # Clamp integral error term when motors are saturated

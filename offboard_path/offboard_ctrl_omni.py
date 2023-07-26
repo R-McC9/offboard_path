@@ -59,7 +59,7 @@ class OffboardControl(Node):
         self.now = 0.0
         self.timer = self.create_timer(0.1, self.timer_callback)
 
-        self.goal = [0.0, 0.0, -10.0]
+        self.goal = [0.0, 0.0, -5.0]
 
         self.prev_err_x = 0.0
         self.err_sum_x = 0.0
@@ -173,15 +173,15 @@ class OffboardControl(Node):
         # Fly a square with corners at (0,0), (5,0), (5,5), (0,5)
         # should take 6 seconds per side
         if time <= 8.0:
-            self.goal = [0.0 + time, 0.0, -10.0]
+            self.goal = [0.0 + time, 0.0, -5.0]
         elif time >= 8.0 and time <= 16.0:
-            self.goal = [8.0, 0.0 + (time - 8), -10.0]
+            self.goal = [8.0, 0.0 + (time - 8), -5.0]
         elif time >= 16.0 and time <= 24.0:
-            self.goal = [8.0 - (time - 16.0), 8.0, -10.0]
+            self.goal = [8.0 - (time - 16.0), 8.0, -5.0]
         elif time >= 24.0 and time <= 32.0:
-            self.goal = [0.0, 8.0 - (time - 24.0), -10.0]
+            self.goal = [0.0, 8.0 - (time - 24.0), -5.0]
         else:
-            self.goal = [0.0, 0.0, -10.0]
+            self.goal = [0.0, 0.0, -5.0]
         return self.goal
 
     def vehicle_status_callback(self, vehicle_status):
@@ -279,7 +279,7 @@ class OffboardControl(Node):
         self.publish_offboard_control_heartbeat_signal()
         self.now += 0.1
         # Uncomment this to follow a square trajctory
-        #self.update_goal(self.now)
+        self.update_goal(self.now)
 
         if self.offboard_setpoint_counter == 10:
             self.engage_offboard_mode()
