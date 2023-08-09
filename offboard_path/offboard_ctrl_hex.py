@@ -15,6 +15,8 @@ from px4_msgs.msg import (OffboardControlMode, TrajectorySetpoint,
 
 from offboard_msgs.msg import ControlData
 
+from geometry_msgs.msg import WrenchStamped
+
 class OffboardControl(Node):
     """Node for controlling vehicle in offboard mode"""
 
@@ -25,6 +27,13 @@ class OffboardControl(Node):
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+
+        # Gazebo quality of service profile
+        gazebo_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=1
         )
@@ -48,6 +57,9 @@ class OffboardControl(Node):
             VehicleOdometry, '/fmu/out/vehicle_odometry', self.vehicle_odometry_callback, qos_profile)
         self.vehicle_status_subscriber = self.create_subscription(
             VehicleStatus, '/fmu/out/vehicle_status', self.vehicle_status_callback, qos_profile)
+        # Subscriber for force/torque feedback
+        self.force_torque_subscriber = self.create_subscription(
+            WrenchStamped, '/wrench', self.force_torque_callback, gazebo_qos)
 
         # Initialize variables
         self.offboard_setpoint_counter = 0
@@ -57,7 +69,7 @@ class OffboardControl(Node):
         # Create a timer to publish commands
         self.timer = self.create_timer(0.1, self.timer_callback)
 
-        self.goal = [0.0, 0.0, -5.0]
+        self.goal = [0.0, 0.0, -2.0]
 
         self.prev_err_x = 0.0
         self.err_sum_x = 0.0
@@ -74,16 +86,16 @@ class OffboardControl(Node):
         w, i, j, k = msg.q
 
         kpz = 0.7
-        kiz = 0.001
-        kdz = 50
+        kiz = 0.002
+        kdz = 60
 
         kpx = 0.7
-        kix = 0.0001
-        kdx = 50
+        kix = 0.0002
+        kdx = 60
 
         kpy = 0.5
-        kiy = 0.001
-        kdy = 30
+        kiy = 0.002
+        kdy = 40
 
         # X, Y position control
         # Convert to body frame from world frame
@@ -129,12 +141,12 @@ class OffboardControl(Node):
         self.prev_err_y = err_y_body
 
         # Clamp integral error term when motors are saturated
-        if U_x <= -0.2:
-            U_x = -0.2
+        if U_x <= -0.3:
+            U_x = -0.3
             self.err_sum_x = 0
 
-        if U_x >= 0.2:
-            U_x = 0.2
+        if U_x >= 0.3:
+            U_x = 0.3
             self.err_sum_x = 0
 
         # Clamp integral error term when motors are saturated
@@ -150,6 +162,12 @@ class OffboardControl(Node):
         self.publish_attitude_setpoint(self.q_d, [U_x, U_y, U_z])
         self.publish_control_data(msg.position, msg.q, self.goal, self.q_d, [U_x, U_y, U_z], msg.velocity, msg.angular_velocity)
 
+    def force_torque_callback(self, msg):
+        """Callback function for force/torque sensor"""
+        self.current_F = msg.wrench.force
+        self.current_T = msg.wrench.torque
+        return self.current_F, self.current_T
+    
     def world_err_to_body_err(self, rpy, err_array):
         err_x_body, err_y_body, err_z_body = np.matmul(rpy.as_matrix(), err_array)
         return err_x_body, err_y_body, err_z_body

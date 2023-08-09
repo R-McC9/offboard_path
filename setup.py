@@ -23,6 +23,7 @@ setup(
             'offboard_ctrl_omni = offboard_path.offboard_ctrl_omni:main',
             'offboard_ctrl_quad = offboard_path.offboard_ctrl_quad:main',
             'offboard_ctrl_hex = offboard_path.offboard_ctrl_hex:main',
+            'offboard_ctrl_attitude = offboard_path.offboard_ctrl_attitude:main',
             'odom_logger = offboard_path.odom_logger:main'
         ],
     },

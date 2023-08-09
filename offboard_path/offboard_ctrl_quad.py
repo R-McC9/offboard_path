@@ -1,14 +1,18 @@
 #!/usr/bin/env python
 
+from ast import While
 from time import sleep
 import math
 import numpy as np
 from scipy.spatial.transform import Rotation as R
+import keyboard
 
 import rclpy
 from rclpy.clock import Clock
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
+
+from offboard_msgs.msg import ControlData
 
 from px4_msgs.msg import (OffboardControlMode, TrajectorySetpoint,
                           VehicleCommand, VehicleControlMode, VehicleOdometry,
@@ -37,6 +41,8 @@ class OffboardControl(Node):
             VehicleRatesSetpoint, "/fmu/in/vehicle_rates_setpoint", qos_profile)
         self.vehicle_command_publisher_ = self.create_publisher(
             VehicleCommand, "/fmu/in/vehicle_command", qos_profile)
+        self.control_data_publisher = self.create_publisher(
+            ControlData, '/ControlData', qos_profile)
 
         # Create Subscribers
         self.vehicle_odometry_subscriber_ = self.create_subscription(
@@ -56,7 +62,7 @@ class OffboardControl(Node):
         # Position controller
         # roll/pitch setpoint (body frame)
         self.kpx = 0.8
-        self.kix = 0.000001
+        self.kix = 0.000000001
         self.kdx = 20.0
 
         self.kpy = 0.8
@@ -103,7 +109,7 @@ class OffboardControl(Node):
         self.prev_err_yaw = 0.0
 
         # Define goal position, this needs to be a trajectory in the future!!!
-        self.goal = [0.0, 0.0, -10.0]
+        self.goal = [0.0, 0.0, -1.0]
 
     def odometry_callback(self, msg):
         """Recieves odometry data, does PID control math, publishes thrust and angular rates as inputs"""
@@ -150,12 +156,10 @@ class OffboardControl(Node):
         roll = self.kpx * err_x_body + self.kix * self.err_sum_x_body + self.kdx * err_dif_x_body
         pitch = -1*(self.kpy * err_y_body + self.kiy * self.err_sum_y_body + self.kdy * err_dif_y_body)
 
-        # Remove this lateer!!!
+        # Remove this later!!!
         # Bypassing controller for now
         # +roll is right, -roll is left
         # +pitch is back, -pitch is forward
-        # roll = 0
-        # pitch = -5
 
         # Clamping terms to avoid over pitching/rolling
         if pitch <= -5:
@@ -223,10 +227,6 @@ class OffboardControl(Node):
 
         self.prev_err_pitch = pitch_err
 
-        #print(self.goal[0], err_x_body, roll_rate)
-        #print(self.goal[1], err_y_body, pitch_rate)
-        #print(x, y, roll, pitch, yaw_meas)
-
         # Yaw
         yaw_ref = 0.0 #degrees
 
@@ -247,7 +247,6 @@ class OffboardControl(Node):
         if yaw_rate >= 0.1:
             yaw_rate = 0.1
             self.err_sum_yaw = 0
-        # yaw_rate = 0.01
 
         # Altitude controller
         err_z = self.goal[2] - z
@@ -259,12 +258,12 @@ class OffboardControl(Node):
         U_z = self.kp * err_z + self.ki * self.err_sum_z + self.kd * err_dif_z
 
         # Clamp integral error term when motors are saturated
-        if U_z <= -1.0:
-            U_z = -1.0
+        if U_z <= -0.4:
+            U_z = -0.4
             self.err_sum_z = 0
 
-        if U_z >= 1.0:
-            U_z = 1.0
+        if U_z >= 0.4:
+            U_z = 0.4
             self.err_sum_z = 0
 
         self.prev_err_z = err_z
@@ -274,8 +273,6 @@ class OffboardControl(Node):
         # thrust_rates = [0.0, 0.0, 0.0]
         # ang_rates = [0.0, 0.0, 0.0]
 
-        # print(yaw_meas, yaw_err, yaw_rate)
-
         # Compute thrust input using PID controller math
         self.publish_rates_setpoint(ang_rates, thrust_rates)
 
@@ -284,33 +281,15 @@ class OffboardControl(Node):
 
         #print(yaw_meas, yaw_err, yaw_rate)
         #print(x,y,z)
-        print(err_x_body, roll_ref, roll_meas, roll_rate)
+        #print(err_x_body, roll_ref, roll_meas, roll_rate)
+        print(err_z, U_z)
+        #self.publish_control_data(msg.position, msg.q, self.goal, self.q_d, [U_x, U_y, U_z], msg.velocity, msg.angular_velocity)
 
     def update_goal(self):
         """Takes in the current timestamp and updates the goal position accordingly"""
         # Goal is presently just XYZ position, need to add quaternion orientation.
         # May consider also including the goal velocity
         self.goal = [0.0, 0.0, -10 + 2*math.sin(int(self.get_clock().now().nanoseconds / 1000)*0.000001)]
-
-    # def euler_from_quaternion(self, w, i, j, k):
-    #     jsqr = j * j
-       
-    #     t0 = +2.0 * (w * i + j * k)
-    #     t1 = +1.0 - 2.0 * (i * i + jsqr)
-    #     roll_x = np.degrees(np.arctan2(t0, t1))
-        
-    #     t2 = +2.0 * (w * j - k * i)
-    #     # t2 = +1.0 if t2 > +1.0 else t2
-    #     # t2 = -1.0 if t2 < -1.0 else t2
-    #     t2 = np.where(t2>+1.0, +1.0, t2)
-    #     t2 = np.where(t2<-1.0, -1.0, t2)
-    #     pitch_y = np.degrees(np.arcsin(t2))
-        
-    #     t3 = +2.0 * (w * k + i * j)
-    #     t4 = +1.0 - 2.0 * (jsqr + k * k)
-    #     yaw_z = np.degrees(np.arctan2(t3, t4))
-        
-    #     return roll_x, pitch_y, yaw_z # in radians
 
     def world_err_to_body_err(self, yaw_meas, err_x, err_y):
         x_err_body = math.cos(yaw_meas)*err_x - math.sin(yaw_meas)*err_y
@@ -333,7 +312,6 @@ class OffboardControl(Node):
         # Stop counter after reaching 11
         if (self.offboard_setpoint_counter < 11):
             self.offboard_setpoint_counter += 1
-
 
     def arm(self):
         """Send an arm command to the vehicle"""
@@ -403,6 +381,19 @@ class OffboardControl(Node):
         msg.from_external = True
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.vehicle_command_publisher_.publish(msg)
+
+    def publish_control_data(self, pos, q, pos_d, q_d, thrust_body, vel, ang_vel):
+        """Publishes control data (pos/att, error, inputs, etc.) to ROS2 topic for analysis"""
+        msg = ControlData()
+        msg.position = pos
+        msg.q = q
+        msg.position_d = pos_d
+        msg.q_d = q_d
+        msg.velocity = vel
+        msg.angular_velocity = ang_vel
+        msg.body_thrust_inputs = thrust_body
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        self.control_data_publisher.publish(msg)
 
 def main(args=None):
     rclpy.init(args=args)
