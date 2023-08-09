@@ -59,7 +59,8 @@ class OffboardControl(Node):
         self.now = 0.0
         self.timer = self.create_timer(0.1, self.timer_callback)
 
-        self.goal = [0.0, 0.0, -5.0]
+        self.goal = [0.0, 0.0, 0.0]
+        self.q_d = [1.0, 0.0, 0.0, 0.0]
 
         self.prev_err_x = 0.0
         self.err_sum_x = 0.0
@@ -142,7 +143,7 @@ class OffboardControl(Node):
             U_y = 0.6
             self.err_sum_y = 0
 
-        self.q_d = [0.0, 0.0, 0.0, 1.0]
+        # self.q_d = [1.0, 0.0, 0.0, 0.0]
         # thrust_sum = math.sqrt(U_x**2 + U_y**2 + U_z**2)
         # body_thrust_norm = [U_x/thrust_sum, U_y/thrust_sum, U_z/thrust_sum]
         # self.publish_attitude_setpoint(q_d, body_thrust_norm)
@@ -165,21 +166,24 @@ class OffboardControl(Node):
 
     def update_quaternion(self, time):
         """Updates quaternion setpoint for smooth attitude tracking."""
-        #self.q_d = 
+        rot_d = R.from_euler('zxy', [-time*0.1 + 0.0, 0.0, 0.0])
+        self.q_d = np.float32(rot_d.as_quat())
         return self.q_d
 
     def update_goal(self, time):
         """Updates position setpoint for smooth position tracking."""
-        # Fly a square with corners at (0,0), (5,0), (5,5), (0,5)
-        # should take 6 seconds per side
+        # Fly a square with corners at (0,0), (8,0), (8,8), (0,8)
+        # should take 8 seconds per side
         if time <= 8.0:
-            self.goal = [0.0 + time, 0.0, -5.0]
-        elif time >= 8.0 and time <= 16.0:
-            self.goal = [8.0, 0.0 + (time - 8), -5.0]
-        elif time >= 16.0 and time <= 24.0:
-            self.goal = [8.0 - (time - 16.0), 8.0, -5.0]
-        elif time >= 24.0 and time <= 32.0:
-            self.goal = [0.0, 8.0 - (time - 24.0), -5.0]
+            self.goal = [0.0, 0.0, -5.0*(time/8.0)]
+        # elif time >= 8.0 and time <= 16.0:
+        #     self.goal = [0.0 + (time - 8.0), 0.0, -5.0]
+        # elif time >= 16.0 and time <= 24.0:
+        #     self.goal = [8.0, 0.0 + (time - 16.0), -5.0]
+        # elif time >= 24.0 and time <= 32.0:
+        #     self.goal = [8.0 - (time - 24.0), 8.0, -5.0]
+        # elif time >= 32.0 and time <= 40.0:
+        #     self.goal = [0.0, 8.0 - (time - 32.0), -5.0]
         else:
             self.goal = [0.0, 0.0, -5.0]
         return self.goal
@@ -280,6 +284,7 @@ class OffboardControl(Node):
         self.now += 0.1
         # Uncomment this to follow a square trajctory
         self.update_goal(self.now)
+        self.update_quaternion(self.now)
 
         if self.offboard_setpoint_counter == 10:
             self.engage_offboard_mode()
