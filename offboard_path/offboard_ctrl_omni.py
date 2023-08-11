@@ -143,22 +143,14 @@ class OffboardControl(Node):
             U_y = 0.6
             self.err_sum_y = 0
 
+        # rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
+        # self.q_d = np.float32(rot_d.as_quat())
         # self.q_d = [1.0, 0.0, 0.0, 0.0]
-        # thrust_sum = math.sqrt(U_x**2 + U_y**2 + U_z**2)
-        # body_thrust_norm = [U_x/thrust_sum, U_y/thrust_sum, U_z/thrust_sum]
-        # self.publish_attitude_setpoint(q_d, body_thrust_norm)
-
-        # # Compute variance in position to know that we've settled
-        # position_variance = self.goal - msg.position
-
-        # # Wait for craft to settle at starting position, then update goal position to trace the path
-        # if position_variance[2] < 0.01 and position_variance[2] > -0.01:
-        #     self.update_goal()
 
         # Publish control inputs
         self.publish_attitude_setpoint(self.q_d, [U_x, U_y, U_z])
         # Publish control data to different topic for graphing/debugging
-        self.publish_control_data(msg.position, msg.q, self.goal, self.q_d, [U_x, U_y, U_z], msg.velocity, msg.angular_velocity)
+        self.publish_control_data(msg.position, msg.q, self.goal, self.q_d, [U_x, U_y, U_z], [err_x_body, err_y_body, err_z_body], msg.velocity, msg.angular_velocity)
 
     def world_err_to_body_err(self, rpy, err_array):
         err_x_body, err_y_body, err_z_body = np.matmul(rpy.as_matrix(), err_array)
@@ -166,7 +158,15 @@ class OffboardControl(Node):
 
     def update_quaternion(self, time):
         """Updates quaternion setpoint for smooth attitude tracking."""
-        rot_d = R.from_euler('zxy', [-time*0.1 + 0.0, 0.0, 0.0])
+        if time < 8.0:
+            rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+        elif time >= 8.0 and time <= 16.0:
+            rot_d = R.from_euler('zxy', [0.0, ((time - 8.0)/8.0)*360.0, 0.0], degrees=True)
+        elif time >= 16.0 and time <= 24.0:
+            rot_d = R.from_euler('zxy', [0.0, -1*((time -16.0)/8.0)*360.0, 0.0], degrees=True)
+        else:
+            rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+        
         self.q_d = np.float32(rot_d.as_quat())
         return self.q_d
 
@@ -265,13 +265,14 @@ class OffboardControl(Node):
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.vehicle_command_publisher.publish(msg)
 
-    def publish_control_data(self, pos, q, pos_d, q_d, thrust_body, vel, ang_vel):
+    def publish_control_data(self, pos, q, pos_d, q_d, thrust_body, body_errors, vel, ang_vel):
         """Publishes control data (pos/att, error, inputs, etc.) to ROS2 topic for analysis"""
         msg = ControlData()
         msg.position = pos
         msg.q = q
         msg.position_d = pos_d
         msg.q_d = q_d
+        msg.body_errors = body_errors
         msg.velocity = vel
         msg.angular_velocity = ang_vel
         msg.body_thrust_inputs = thrust_body

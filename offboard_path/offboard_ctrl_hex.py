@@ -67,9 +67,10 @@ class OffboardControl(Node):
         self.vehicle_status = VehicleStatus()
 
         # Create a timer to publish commands
+        self.now = 0.0
         self.timer = self.create_timer(0.1, self.timer_callback)
 
-        self.goal = [0.0, 0.0, -2.0]
+        self.goal = [0.0, 0.0, 0.0]
 
         self.prev_err_x = 0.0
         self.err_sum_x = 0.0
@@ -158,15 +159,35 @@ class OffboardControl(Node):
             U_y = 0.1
             self.err_sum_y = 0
 
-        self.q_d = [1.0, 0.0, 0.0, 0.0]
+        rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
+        self.q_d = np.float32(rot_d.as_quat())
+        # self.q_d = [1.0, 0.0, 0.0, 0.0]
         self.publish_attitude_setpoint(self.q_d, [U_x, U_y, U_z])
         self.publish_control_data(msg.position, msg.q, self.goal, self.q_d, [U_x, U_y, U_z], msg.velocity, msg.angular_velocity)
 
     def force_torque_callback(self, msg):
         """Callback function for force/torque sensor"""
-        self.current_F = msg.wrench.force
-        self.current_T = msg.wrench.torque
-        return self.current_F, self.current_T
+        # self.current_F = msg.wrench.force
+        # self.current_T = msg.wrench.torque
+        # return self.current_F, self.current_T
+
+    def update_goal(self, time):
+        """Updates position setpoint for smooth position tracking."""
+        # Fly a square with corners at (0,0), (8,0), (8,8), (0,8)
+        # should take 8 seconds per side
+        if time <= 8.0:
+            self.goal = [0.0, 0.0, -5.0*(time/8.0)]
+        # elif time >= 8.0 and time <= 16.0:
+        #     self.goal = [0.0 + (time - 8.0), 0.0, -5.0]
+        # elif time >= 16.0 and time <= 24.0:
+        #     self.goal = [8.0, 0.0 + (time - 16.0), -5.0]
+        # elif time >= 24.0 and time <= 32.0:
+        #     self.goal = [8.0 - (time - 24.0), 8.0, -5.0]
+        # elif time >= 32.0 and time <= 40.0:
+        #     self.goal = [0.0, 8.0 - (time - 32.0), -5.0]
+        else:
+            self.goal = [0.0, 0.0, -5.0]
+        return self.goal
     
     def world_err_to_body_err(self, rpy, err_array):
         err_x_body, err_y_body, err_z_body = np.matmul(rpy.as_matrix(), err_array)
@@ -265,6 +286,9 @@ class OffboardControl(Node):
     def timer_callback(self) -> None:
         """Callback function for the timer."""
         self.publish_offboard_control_heartbeat_signal()
+        self.now += 0.1
+
+        self.update_goal(self.now)
 
         if self.offboard_setpoint_counter == 10:
             self.engage_offboard_mode()
