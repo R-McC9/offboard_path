@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from cmath import nan
 from turtle import position
 import numpy as np
 import math
@@ -56,11 +57,14 @@ class OffboardControl(Node):
         self.vehicle_status = VehicleStatus()
 
         # Create a timer to publish commands
-        self.now = 0.0
         self.timer = self.create_timer(0.1, self.timer_callback)
 
+        # Create time for faster trajectory updating
+        self.now = 0.0
+        self.traj_timer = self.create_timer(0.01, self.traj_timer_callback)
+
         self.goal = [0.0, 0.0, 0.0]
-        self.q_d = [1.0, 0.0, 0.0, 0.0]
+        self.q_d = [nan, nan, nan, nan]
 
         self.prev_err_x = 0.0
         self.err_sum_x = 0.0
@@ -77,8 +81,8 @@ class OffboardControl(Node):
         w, i, j, k = msg.q
         self.t0 = msg.timestamp
 
-        kp = 0.5
-        ki = 0.001
+        kp = 0.2
+        ki = 0.0001
         kd = 10
 
         # X, Y position control
@@ -107,16 +111,16 @@ class OffboardControl(Node):
 
         U_z = kp * err_z_body + ki * self.err_sum_z + kd * err_dif_z
 
-        # Clamp integral error term when motors are saturated
-        if U_z <= -0.6:
-            U_z = -0.6
-            self.err_sum_z = 0
-
-        if U_z >= 0.6:
-            U_z = 0.6
-            self.err_sum_z = 0
-
         self.prev_err_z = err_z_body
+
+        # Clamp integral error term when motors are saturated
+        if U_z <= -0.9:
+            U_z = -0.9
+            self.err_sum_z = 0
+
+        if U_z >= 0.9:
+            U_z = 0.9
+            self.err_sum_z = 0
 
         # X,Y position controller
         self.err_sum_x += err_x_body
@@ -132,21 +136,21 @@ class OffboardControl(Node):
         self.prev_err_y = err_y_body
 
         # Clamp integral error term when motors are saturated
-        if U_x <= -0.6:
-            U_x = -0.6
+        if U_x <= -0.9:
+            U_x = -0.9
             self.err_sum_x = 0
 
-        if U_x >= 0.6:
-            U_x = 0.6
+        if U_x >= 0.9:
+            U_x = 0.9
             self.err_sum_x = 0
 
         # Clamp integral error term when motors are saturated
-        if U_y <= -0.6:
-            U_y = -0.6
+        if U_y <= -0.9:
+            U_y = -0.9
             self.err_sum_y = 0
 
-        if U_y >= 0.6:
-            U_y = 0.6
+        if U_y >= 0.9:
+            U_y = 0.9
             self.err_sum_y = 0
 
         # rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
@@ -155,11 +159,15 @@ class OffboardControl(Node):
 
         # Publish control inputs
         self.publish_attitude_setpoint(self.q_d, [U_x, U_y, U_z])
+
         # Publish control data to different topic for graphing/debugging
-        self.publish_control_data(msg.position, msg.q, rotMat_1, rotMat_2, rotMat_3, 
+        self.publish_control_data(msg.position, msg.q, 
                                 self.goal, self.q_d, [U_x, U_y, U_z],
                                 [err_x_body, err_y_body, err_z_body], msg.velocity, msg.angular_velocity)
+        
+        print(U_z, err_z_body)
 
+    # Not sure this is nessecary. Could still be able to use scipy's as_euler and as_quat functions
     def quat2rot(self, w, i, j, k):
         """Function for converting quaternion to rotation matrix as numpy array"""
         # Extract the values from Q
@@ -191,6 +199,7 @@ class OffboardControl(Node):
         return rot_matrix
 
     def world_err_to_body_err(self, rot_matrix, err_array):
+        """Transforms error in world fram to error in body frame"""
         err_x_body, err_y_body, err_z_body = np.matmul(rot_matrix.transpose(), err_array)
         return err_x_body, err_y_body, err_z_body, np.float32(rot_matrix)
 
@@ -199,11 +208,11 @@ class OffboardControl(Node):
         if time < 8.0:
             rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
         elif time >= 8.0 and time <= 16.0:
-            rot_d = R.from_euler('zxy', [((time - 8.0)/8.0)*360.0, 0.0, 0.0], degrees=True)
+            rot_d = R.from_euler('zxy', [((time - 8.0)/8.0)*180.0, 0.0, 0.0], degrees=True)
         elif time >= 16.0 and time <= 24.0:
-            rot_d = R.from_euler('zxy', [0.0, ((time - 16.0)/8.0)*360.0, 0.0], degrees=True)
+            rot_d = R.from_euler('zxy', [180.0, ((time - 16.0)/8.0)*180.0, 0.0], degrees=True)
         elif time >= 24.0 and time <= 32.0:
-            rot_d = R.from_euler('zxy', [0.0, 0.0, ((time - 24.0)/8.0)*360.0], degrees=True)
+            rot_d = R.from_euler('zxy', [180.0, 180.0, ((time - 24.0)/8.0)*180.0], degrees=True)
         else:
             rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
         
@@ -225,7 +234,7 @@ class OffboardControl(Node):
         #     self.goal = [8.0 - (time - 24.0), 8.0, -5.0]
         # elif time >= 32.0 and time <= 40.0:
         #     self.goal = [0.0, 8.0 - (time - 32.0), -5.0]
-        else:
+        elif time > 8.0:
             self.goal = [0.0, 0.0, -5.0]
         return self.goal
 
@@ -306,14 +315,11 @@ class OffboardControl(Node):
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.vehicle_command_publisher.publish(msg)
 
-    def publish_control_data(self, pos, q, rotMat_1, rotMat_2, rotMat_3, pos_d, q_d, thrust_body, body_errors, vel, ang_vel):
+    def publish_control_data(self, pos, q, pos_d, q_d, thrust_body, body_errors, vel, ang_vel):
         """Publishes control data (pos/att, error, inputs, etc.) to ROS2 topic for analysis"""
         msg = ControlData()
         msg.position = pos
         msg.q = q
-        msg.rotmat1 = rotMat_1
-        msg.rotmat2 = rotMat_2
-        msg.rotmat3 = rotMat_3
         msg.position_d = pos_d
         msg.q_d = q_d
         msg.body_errors = body_errors
@@ -326,10 +332,6 @@ class OffboardControl(Node):
     def timer_callback(self) -> None:
         """Callback function for the timer."""
         self.publish_offboard_control_heartbeat_signal()
-        self.now += 0.1
-        # Uncomment this to follow a square trajctory
-        self.update_goal(self.now)
-        self.update_quaternion(self.now)
 
         if self.offboard_setpoint_counter == 10:
             self.engage_offboard_mode()
@@ -338,9 +340,18 @@ class OffboardControl(Node):
         if self.offboard_setpoint_counter < 11:
             self.offboard_setpoint_counter += 1
 
-        # if self.start_rotate == True:
-        #     self.now = 0
-        #     #self.update_quaternion(self.now)
+        # if self.offboard_setpoint_counter >= 11:
+        #     self.now += 0.1
+        #     self.update_goal(self.now)
+        #     self.update_quaternion(self.now)
+
+    def traj_timer_callback(self) -> None:
+        """Callback function for updating vehicle trajectory"""
+
+        if self.offboard_setpoint_counter >= 11:
+            self.now += 0.005
+            self.update_goal(self.now)
+            self.update_quaternion(self.now)
 
 def main(args=None) -> None:
     print('Starting offboard control node...')
