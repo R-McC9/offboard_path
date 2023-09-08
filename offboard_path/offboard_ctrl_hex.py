@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from multiprocessing.context import _force_start_method
 import numpy as np
 import math
 from scipy.spatial.transform import Rotation as R
@@ -16,6 +17,7 @@ from px4_msgs.msg import (OffboardControlMode, TrajectorySetpoint,
 from offboard_msgs.msg import ControlData
 
 from geometry_msgs.msg import WrenchStamped
+from geometry_msgs.msg import Pose
 
 class OffboardControl(Node):
     """Node for controlling vehicle in offboard mode"""
@@ -51,15 +53,23 @@ class OffboardControl(Node):
             ControlData, '/ControlData', qos_profile)
 
         # Create Subscribers
+        # Vehicle Data
         # self.vehicle_local_position_subscriber = self.create_subscription(
         #     VehicleLocalPosition, '/fmu/out/vehicle_local_position', self.vehicle_local_position_callback, qos_profile)
         self.vehicle_odometry_subscriber = self.create_subscription(
             VehicleOdometry, '/fmu/out/vehicle_odometry', self.vehicle_odometry_callback, qos_profile)
         self.vehicle_status_subscriber = self.create_subscription(
             VehicleStatus, '/fmu/out/vehicle_status', self.vehicle_status_callback, qos_profile)
+
         # Subscriber for force/torque feedback
-        self.force_torque_subscriber = self.create_subscription(
-            WrenchStamped, '/wrench', self.force_torque_callback, gazebo_qos)
+        self.force_torque_subscriber_sim = self.create_subscription(
+            WrenchStamped, '/wrench', self.force_torque_callback_sim, gazebo_qos)
+        # self.force_torque_subscriber = self.create_subscription(
+        #     WrenchStamped, '/bus0/ft_sensor0/ft_sensor_readings/wrench', self.force_torque_callback, 10)
+
+        # Position data for the object
+        self.board_subscriber_ = self.create_subscription(
+            Pose, '/vicon/board_pose', self.board_pose_callback, 10)
 
         # Initialize variables
         self.offboard_setpoint_counter = 0
@@ -74,8 +84,14 @@ class OffboardControl(Node):
         self.traj_timer = self.create_timer(0.01, self.traj_timer_callback)
 
         self.goal = [0.0, 0.0, 0.0]
+        self.first_run = True
+        self.hybrid = False
         self.start_pos = [0.0, 0.0, 0.0]
+        self.drone_position = [0.0, 0.0, 0.0]
+        self.drone_orientation = [1.0, 0.0, 0.0, 0.0]
         self.q_d = [1.0, 0.0, 0.0, 0.0]
+
+        self.force_d = -1.0
 
         self.prev_err_x = 0.0
         self.err_sum_x = 0.0
@@ -86,35 +102,54 @@ class OffboardControl(Node):
         self.prev_err_z = 0.0
         self.err_sum_z = 0.0
 
+        self.prev_err_F = 0.0
+        self.err_sum_F = 0.0
+
         self.count = 0
         self.num = 0
-        self.prev_U = np.empty((20,3))
+        self.prev_F = np.empty((50,3))
 
-    def vehicle_odometry_callback(self, msg):
-        """Callbackfunction for vehicle_odometry topic subscriber."""
-        x, y, z = msg.position
-        w, i, j, k = msg.q
+        self.avg = np.array([0.0, 0.0, 0.0])
+
+        self.current_F_x = 0.0
+        self.current_F_y = 0.0
+        self.current_F_z = 0.0
+
+        self.current_T_x = 0.0
+        self.current_T_y = 0.0
+        self.current_T_z = 0.0
+
+        self.board_pos = [1.0, 1.0, 0.0]
+        self.board_ori = [1.0, 0.0, 0.0, 0.0]
+        self.dtb = [0.0, 0.0, 0.0]
+
+    def PID_position_control(self):
+        """PID for basic position control"""
+        x, y, z = self.drone_position
+        w, i, j, k = self.drone_orientation
 
         kpz = 0.6
         kiz = 0.006
         kdz = 20
 
         kpx = 0.7
-        kix = 0.0002
-        kdx = 30
+        kix = 0.002
+        kdx = 15
 
         kpy = 0.7
-        kiy = 0.0002
-        kdy = 30
+        kiy = 0.002
+        kdy = 15
 
         # X, Y position control
         # Calculate rotation matrix from quaternion
-        # rot_matrix = self.quat2rot(w, i, j, k)
         rpy = R.from_quat([i, j, k, w])
 
         err_x = self.goal[0] - x
         err_y = self.goal[1] - y
         err_z = self.goal[2] - z
+
+        # Calculate the distance from the end effector to the board (meters)
+        # self.dtb = np.array(self.board_pos) - [x + 0.65, y, z]
 
         # Determine position of reference in the body frame
         err_x_body, err_y_body, err_z_body = self.world_err_to_body_err(rpy, np.array([err_x, err_y, err_z]))
@@ -128,8 +163,8 @@ class OffboardControl(Node):
 
         U_z_max = -1.0
 
-        U_x_max = -0.3
-        U_y_max = -0.3
+        U_x_max = -0.5
+        U_y_max = -0.5
 
         # Clamp integral error term when motors are saturated
         if U_z <= U_z_max or U_z >= 0.0:
@@ -165,8 +200,6 @@ class OffboardControl(Node):
             U_y = np.clip(U_y, U_y_max, -U_y_max)
             self.err_sum_y = 0
 
-        # U_z = (U_z + np.sum(self.prev_U, axis=0)[2])/21
-
         # rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
         # rot_d = rot_d.as_quat()
         # self.q_d = np.float32([rot_d[3], rot_d[0], rot_d[1], rot_d[2]])
@@ -174,41 +207,185 @@ class OffboardControl(Node):
         # self.goal = [0.0, 0.0, -0.6]
         self.publish_attitude_setpoint(self.q_d, [U_x, U_y, U_z])
 
-        self.save_U([U_x, U_y, U_z])
+        # print(self.start_pos)
 
-        self.publish_control_data(msg.position, msg.q, self.goal, self.q_d, [err_x_body, err_y_body, err_z_body],
-                               [U_x, U_y, U_z], msg.velocity, msg.angular_velocity)
+        self.publish_control_data(self.drone_position, self.drone_orientation, self.goal, self.q_d, [err_x_body, err_y_body, err_z_body],
+                               [U_x, U_y, U_z], self.drone_velocity, self.drone_ang_vel)
 
-    def save_U(self, U):
-        """Saves N + 1 previous inputs for averaging
-        U = [U_x, U_y, U_z]
-        """
-        N = 20
-        # Write previous input to Nx3 array
-        if self.count < N:
-            self.prev_U[self.count] = U
-            self.count += 1
-            return
-        elif self.count >= N:
-            self.prev_U[self.count - N] = U
-            self.count = 0
-            return
+    def hybrid_control(self):
+        """Hybrid control of position and force applied by the end effector"""
+        # Switch into hybrid control scheme AFTER approaching the target object to a safe distance
+        # Use the same PID math to govern altitude and Y position
+        # Use a desired force setpoint, self.force_d, to govern U_x
+        x, y, z = self.drone_position
+        w, i, j, k = self.drone_orientation
+
+        kpz = 0.6
+        kiz = 0.006
+        kdz = 20
+
+        kpx = 0.07
+        kix = 0.0002
+        kdx = 30
+
+        kpy = 0.7
+        kiy = 0.0002
+        kdy = 30
+
+        # X, Y position control
+        # Calculate rotation matrix from quaternion
+        rpy = R.from_quat([i, j, k, w])
+
+        err_x = self.goal[0] - x
+        err_y = self.goal[1] - y
+        err_z = self.goal[2] - z
+
+        # Calculate the distance from the end effector to the board (meters)
+        # self.dtb = np.array(self.board_pos) - [x + 0.65, y, z]
+
+        # Determine position of reference in the body frame
+        err_x_body, err_y_body, err_z_body = self.world_err_to_body_err(rpy, np.array([err_x, err_y, err_z]))
+
+        # Altitude controller
+        self.err_sum_z += err_z_body
+
+        err_dif_z = err_z_body - self.prev_err_z
+
+        U_z = kpz * err_z_body + kiz * self.err_sum_z + kdz * err_dif_z
+
+        U_z_max = -0.7
+
+        U_x_max = -0.1
+        U_y_max = -0.1
+
+        # Clamp integral error term when motors are saturated
+        if U_z <= U_z_max or U_z >= 0.0:
+            U_z = np.clip(U_z, -1.0, 0.0)
+            self.err_sum_z = 0
+
+        # apply minimum throttle value to prevent chattering at takeoff
+        if U_z >= -0.1 and U_z <= 0.0:
+            U_z = -0.1
+
+        self.prev_err_z = err_z_body
+
+        # Y Position Controller
+        self.err_sum_y += err_y_body
+
+        err_dif_y = err_y_body - self.prev_err_y
+
+        U_y = (kpy * err_y_body + kiy * self.err_sum_y + kdy * err_dif_y)
+
+        self.prev_err_y = err_y_body
+
+        # Clamp integral error term when motors are saturated
+        if U_y <= U_y_max or U_y >= -U_y_max:
+            U_y = np.clip(U_y, U_y_max, -U_y_max)
+            self.err_sum_y = 0
+
+        # Force controller
+        # Calculate error in desired force and actual force (!!!Change make sure this is correct when switching to reality!!!!
+        # +X in the gazebo sim may not be +X in real life!)
+        err_F = self.force_d - self.current_F_x
+
+        self.err_sum_F += err_F
+
+        err_dif_F = err_F - self.prev_err_F
+
+        U_x = kpx * err_F + kix * self.err_sum_F + kdx * err_dif_F
+
+        self.prev_err_F = err_F
+
+        # Clamp integral error term when motors are saturated
+        # bound the U_x input so that the drone doesn't bounce too much against the wall
+        if U_x <= -0.0 or U_x >= -U_x_max:
+            U_x = np.clip(U_x, -0.0, -U_x_max)
+            self.err_sum_F = 0
+
+        self.publish_attitude_setpoint(self.q_d, [U_x, U_y, U_z])
+
+        self.publish_control_data(self.drone_position, self.drone_orientation, self.goal, self.q_d, [err_x_body, err_y_body, err_z_body],
+                               [U_x, U_y, U_z], self.drone_velocity, self.drone_ang_vel)
+
+    def vehicle_odometry_callback(self, msg):
+        """Callbackfunction for vehicle_odometry topic subscriber."""
+        self.drone_position = msg.position
+        self.drone_orientation = msg.q
+        
+        self.drone_velocity = msg.velocity
+        self.drone_ang_vel = msg.angular_velocity
+
+        if self.first_run == True:
+            self.start_pos = msg.position
+            self.first_run = False
+
+    def force_torque_callback_sim(self, msg):
+        """Callback function for simulated force/torque sensor"""
+        # record the current values of force
+        self.current_F_x = -1 * msg.wrench.force.x
+        self.current_F_y = msg.wrench.force.y
+        self.current_F_z = msg.wrench.force.z
+        
+        # Record the currrent values of torque
+        # self.curent_T_x = msg.wrench.torque.x
 
     def force_torque_callback(self, msg):
-        """Callback function for force/torque sensor"""
-        # self.current_F = msg.wrench.force
-        # return self.current_F, self.current_T
+        """Callback function for rokubimini force/torque sensor"""
+        # Zero the sensor
+        # save the first N datapoints, average them, subtract those values from future data points
+        N = 50
+        if self.count < N:
+            self.save_F([msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z], N)
+            return
+        if self.count == N:
+            self.avg = self.prev_F.sum(axis=0) / N
+
+        # record the current values of force
+        self.current_F_x = msg.wrench.force.x - self.avg[0]
+        self.current_F_y = msg.wrench.force.y - self.avg[1]
+        self.current_F_z = msg.wrench.force.z - self.avg[2]
+        
+        # Record the currrent values of torque
+        # self.curent_T_x = msg.wrench.torque.x
+
+    def save_F(self, F, N):
+        """Saves N + 1 previous force datapoints for averaging in order to zero the sensor
+        F = [F_x, F_y, F_z]
+        """
+        # Write previous input to Nx3 array
+        if self.count < N:
+            self.prev_F[self.count] = F
+            self.count += 1
+            return
+
+    def board_pose_callback(self, msg):
+        """Callback function for getting position of the board"""
+        self.board_pos = msg.position
+        self.board_ori = msg.orientation
 
     def update_quaternion(self, time):
         """Updates quaternion setpoint for smooth attitude tracking."""
         # Hold attitude @ 0 pitch/roll/yaw
-        rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+        if time < 8.0:
+            rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
+        elif time >= 8.0 and time < 12.0:
+            rot_d = R.from_euler('zxy', [0.0, 0.0, 5.0*((time - 8.0)/4.0)], degrees=True)
+        else:
+            rot_d = R.from_euler('zxy', [0.0, 0.0, 5.0], degrees=True)
 
         #Pitch +-5 degrees over 30 seconds, hold at 0 rotation at the end
         # if time < 10.0:
         #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
         # elif time >= 10.0 and time <= 40.0:
         #     rot_d = R.from_euler('zxy', [0.0, 0.0, np.sin(4*math.pi*((time - 10.0)/30.0))*5.0], degrees=True)
+        # else:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
+
+        #Pitch +-9 degrees over 30 seconds, hold at 0 rotation at the end
+        # if time < 10.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+        # elif time >= 10.0 and time <= 40.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, np.sin(4*math.pi*((time - 10.0)/30.0))*9.0], degrees=True)
         # else:
         #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
 
@@ -226,10 +403,10 @@ class OffboardControl(Node):
     def update_goal(self, time):
         """Updates position setpoint for smooth position tracking."""
         # Slowly ascend to 0.8m over 8 seconds and hold
-        if time <= 8.0:
-            self.goal = np.float32([0.0, 0.0, -0.8*(time/8.0)])
-        else:
-            self.goal = [0.0, 0.0, -0.8]
+        # if time <= 8.0:
+        #     self.goal = [0.0, 0.0, -0.8*(time/8.0)]
+        # else:
+        #     self.goal = [0.0, 0.0, -0.8]
 
         # Slowly ascend to 0.7m, slide left and right, hold @ origin
         # if time <= 8.0:
@@ -245,15 +422,15 @@ class OffboardControl(Node):
 
         # Slowly ascend to 0.7m, slide forward and backward, hold @ origin
         # if time <= 8.0:
-        #     self.goal = np.float32([0.0, 0.0, -0.7*(time/8.0)])
+        #     self.goal = np.float32([0.0, 0.0, -0.8*(time/8.0)])
         # elif time > 8.0 and time <= 12.0:
-        #     self.goal = np.float32([1.0*((time - 8.0)/4.0), 0.0, -0.7])
+        #     self.goal = np.float32([1.0*((time - 8.0)/4.0), 0.0, -0.8])
         # elif time > 12.0 and time <= 20.0:
-        #     self.goal = np.float32([1.0 - 2.0*((time - 12.0)/8.0), 0.0, -0.7])
+        #     self.goal = np.float32([1.0 - 2.0*((time - 12.0)/8.0), 0.0, -0.8])
         # elif time > 20.0 and time <= 24.0:
-        #     self.goal = np.float32([-1.0 + 1.0*((time - 20.0)/4.0), 0.0, -0.7])
+        #     self.goal = np.float32([-1.0 + 1.0*((time - 20.0)/4.0), 0.0, -0.8])
         # else:
-        #     self.goal = [0.0, 0.0, -0.7]
+        #     self.goal = [0.0, 0.0, -0.8]
 
         # Slowly ascend to 0.5m, slide around a 1m square
         # if time <= 8.0:
@@ -269,51 +446,54 @@ class OffboardControl(Node):
         # else:
         #     self.goal = [0.0, 0.0, -0.7]
 
-        # Slowly ascend to 0.5m, trace a horizontal figure eight
+        # Slowly ascend, trace a circle with 0.75 meter radius
+        if time <= 8.0:
+            self.goal = [0.0, 0.0, -0.8*(time/8.0)]
+        elif time > 8.0 and time <= 16.0:
+            self.goal = [0.0, 0.0, -0.8]
+        elif time > 16.0 and time <= 20.0:
+            self.goal = [-0.75*((time - 16.0)/4.0), 0.0, -0.8]
+        elif time > 20.0 and time <= 44.0:
+            self.goal = [-0.75*np.cos(2*np.pi*((time - 20.0)/24.0)), 0.75*np.sin(2*np.pi*(time-20.0)/24.0), -0.8]
+        elif time > 44.0 and time <= 48.0:
+            self.goal = [-0.75 + 0.75*((time - 44.0)/4.0), 0.0, -0.8]
+        else:
+            self.goal = [0.0, 0.0, -0.8]
+
+        # Slowly ascend to 0.5m, trace a vertical figure eight
         # if time <= 8.0:
-        #     self.goal = np.float32([0.0, 0.0, -1.0*(time/8.0)])
-        # elif time > 8.0 and time <= 60.0:
-        #     self.goal = np.float32([3.0*(np.sin(2*np.pi*((time - 8.0)/52.0))/(1 + np.sin(2*np.pi*((time - 8.0)/52.0)))**2), 
-        #                             3.0*(np.sin(2*np.pi*((time - 8.0)/52.0))*np.cos(2*np.pi*((time - 8.0)/52.0)))/(1 + np.sin(2*np.pi*((time - 8.0)/52.0))**2), 
-        #                             -1.0])
+        #     self.goal = [0.0, 0.0, -1.0*(time/8.0)]
+        # elif time > 8.0 and time <= 30.0:
+        #     self.goal = [(np.cos(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))) / (1.0 + np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))**2), 
+        #                             0.0, 
+        #                             -1.0 + (np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2)) * np.cos(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))) / (1.0 + np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))**2)]
         # else:
-        #     self.goal = np.float32([0.0, 0.0, -1.0])
+        #     self.goal = [0.0, 0.0, -1.0]
 
+        # Ascend to 0.8 meters, approach the board, make contact, back away
+        # if time < 8.0:
+        #     # Ascend
+        #     self.goal = [0.0, 0.0, -0.8*(time/8.0)]
+        # elif time >= 8.0 and time < 16.0:
+        #     # Approach
+        #     self.goal = [1.0*((time - 8.0)/8.0), 0.0, -0.8]
+        # elif time >= 16.0 and time < 26.0:
+        #     # Use boardlocation for approach
+        #     self.goal = [1.0 + (self.board_pos[0] - 0.35)*((time - 16)/10.0), 0.0, -0.8]
+        # elif time >= 26.0 and time < 36.0:
+        #     # switch to hybrid force/position control, U_x is now determined by a desired force value
+        #     self.hybrid = True
+        #     # Only Y and Z position matter now for the goal point now
+        #     self.goal = [1.0 + (self.board_pos[0] - 0.35), 0.0, -0.8]
+        # else:
+        #     self.hybrid = False
+        #     self.goal = [1.0 + self.board_pos[0] - 0.35, 0.0, -0.8]
+
+        print(self.goal)
         return self.goal
-
-    # Not sure this is nessecary. Could still be able to use scipy's as_euler and as_quat functions
-    def quat2rot(self, w, i, j, k):
-        """Function for converting quaternion to rotation matrix as numpy array"""
-        # Extract the values from Q
-        q0 = w
-        q1 = i
-        q2 = j
-        q3 = k
-     
-    # First row of the rotation matrix
-        r00 = 2 * (q0 * q0 + q1 * q1) - 1
-        r01 = 2 * (q1 * q2 - q0 * q3)
-        r02 = 2 * (q1 * q3 + q0 * q2)
-     
-    # Second row of the rotation matrix
-        r10 = 2 * (q1 * q2 + q0 * q3)
-        r11 = 2 * (q0 * q0 + q2 * q2) - 1
-        r12 = 2 * (q2 * q3 - q0 * q1)
-     
-    # Third row of the rotation matrix
-        r20 = 2 * (q1 * q3 - q0 * q2)
-        r21 = 2 * (q2 * q3 + q0 * q1)
-        r22 = 2 * (q0 * q0 + q3 * q3) - 1
-     
-    # 3x3 rotation matrix
-        rot_matrix = np.array([[r00, r01, r02],
-                                [r10, r11, r12],
-                                [r20, r21, r22]])
-
-        return rot_matrix
     
     def world_err_to_body_err(self, rpy, err_array):
-        """Change error in world frame to error in body frame"""
+        """Change error in world frame to error inControlData.csv body frame"""
         err_x_body, err_y_body, err_z_body = np.matmul(rpy.as_matrix().transpose(), err_array)
         return err_x_body, err_y_body, err_z_body
 
@@ -405,6 +585,8 @@ class OffboardControl(Node):
         msg.velocity = vel
         msg.angular_velocity = ang_vel
         msg.body_thrust_inputs = thrust_body
+        msg.force_d = self.force_d
+        msg.force = self.current_F_x
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.control_data_publisher.publish(msg)
 
@@ -424,6 +606,10 @@ class OffboardControl(Node):
 
         if self.offboard_setpoint_counter >= 11:
             self.now += 0.01
+            if self.hybrid == False:
+                self.PID_position_control()
+            elif self.hybrid == True:
+                self.hybrid_control()
             self.update_goal(self.now)
             self.update_quaternion(self.now)
 

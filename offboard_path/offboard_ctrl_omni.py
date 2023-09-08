@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
-from cmath import nan
-from turtle import position
+import time
 import numpy as np
 import math
 from scipy.spatial.transform import Rotation as R
@@ -63,8 +62,8 @@ class OffboardControl(Node):
         self.now = 0.0
         self.traj_timer = self.create_timer(0.01, self.traj_timer_callback)
 
-        self.goal = [0.0, 0.0, 0.0]
-        self.q_d = [nan, nan, nan, nan]
+        self.goal = [0.0, 0.0, -0.0]
+        self.q_d = [1.0, 0.0, 0.0, 0.0]
 
         self.prev_err_x = 0.0
         self.err_sum_x = 0.0
@@ -75,21 +74,44 @@ class OffboardControl(Node):
         self.prev_err_z = 0.0
         self.err_sum_z = 0.0
 
-    def vehicle_odometry_callback(self, msg):
-        """Callbackfunction for vehicle_odometry topic subscriber."""
-        x, y, z = msg.position
-        w, i, j, k = msg.q
-        self.t0 = msg.timestamp
+        self.first_run = True
+        self.start_pos = [0.0, 0.0, 0.0]
 
-        kp = 0.2
-        ki = 0.0001
+        self.drone_position = [0.0, 0.0, 0.0]
+        self.drone_orientation = [1.0, 0.0, 0.0, 0.0]
+
+        self.drone_velocity = [0.0, 0.0, 0.0]
+        self.drone_angular_velocity = [0.0, 0.0, 0.0]
+
+        self.e_land_triggered = False
+        self.saved_pos = False
+
+    def vehicle_odometry_callback(self, msg):
+        """Callback function for vehicle_odometry topic subscriber."""
+        self.drone_position = msg.position
+        self.drone_orientation = msg.q
+
+        self.drone_velocity = msg.velocity
+        self.drone_angular_velocity = msg.angular_velocity
+
+        if self.first_run == True:
+            self.start_pos = np.float32(np.array(msg.position))
+            self.first_run = False
+
+    def PID_controller(self):
+        """Callbackfunction for vehicle_odometry topic subscriber."""
+        x, y, z = self.drone_position
+        w, i, j, k = self.drone_orientation
+
+        kp = 0.8
+        ki = 0.006
         kd = 10
 
         # X, Y position control
         # Convert to body frame from world frame
         # Convert quaternion orientation to euler anglesn (radians)
         rpy = R.from_quat([i, j, k, w])
-        rot_matrix = self.quat2rot(w, i, j, k)
+        # rot_matrix = self.quat2rot(w, i, j, k)
         #roll_meas, pitch_meas, yaw_meas = rpy.as_euler('XYZ', degrees=False)
 
         err_x = self.goal[0] - x
@@ -97,12 +119,12 @@ class OffboardControl(Node):
         err_z = self.goal[2] - z
 
         # Determine location of the reference position in the body frame
-        err_x_body, err_y_body, err_z_body, rotMat = self.world_err_to_body_err(rot_matrix, np.array([err_x, err_y, err_z]))
+        err_x_body, err_y_body, err_z_body = self.world_err_to_body_err(rpy, np.array([err_x, err_y, err_z]))
 
         # Separate rotation matrix into lines for publishing, recombine in matlab later
-        rotMat_1 = rotMat[0]
-        rotMat_2 = rotMat[1]
-        rotMat_3 = rotMat[2]
+        # rotMat_1 = rotMat[0]
+        # rotMat_2 = rotMat[1]
+        # rotMat_3 = rotMat[2]
 
         # Altitude controller
         self.err_sum_z += err_z_body
@@ -114,12 +136,9 @@ class OffboardControl(Node):
         self.prev_err_z = err_z_body
 
         # Clamp integral error term when motors are saturated
-        if U_z <= -0.9:
-            U_z = -0.9
-            self.err_sum_z = 0
-
-        if U_z >= 0.9:
-            U_z = 0.9
+        Umax = 0.50
+        if U_z <= -Umax or U_z >= Umax:
+            U_z = np.clip(U_z, Umax, -Umax)
             self.err_sum_z = 0
 
         # X,Y position controller
@@ -136,21 +155,13 @@ class OffboardControl(Node):
         self.prev_err_y = err_y_body
 
         # Clamp integral error term when motors are saturated
-        if U_x <= -0.9:
-            U_x = -0.9
-            self.err_sum_x = 0
-
-        if U_x >= 0.9:
-            U_x = 0.9
+        if U_x <= -Umax or U_x >= Umax:
+            U_x = np.clip(U_x, Umax, -Umax)
             self.err_sum_x = 0
 
         # Clamp integral error term when motors are saturated
-        if U_y <= -0.9:
-            U_y = -0.9
-            self.err_sum_y = 0
-
-        if U_y >= 0.9:
-            U_y = 0.9
+        if U_y <= -Umax or U_y >= Umax:
+            U_y = np.clip(U_y, Umax, -Umax)
             self.err_sum_y = 0
 
         # rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
@@ -161,81 +172,165 @@ class OffboardControl(Node):
         self.publish_attitude_setpoint(self.q_d, [U_x, U_y, U_z])
 
         # Publish control data to different topic for graphing/debugging
-        self.publish_control_data(msg.position, msg.q, 
+        self.publish_control_data(self.drone_position, self.drone_orientation, 
                                 self.goal, self.q_d, [U_x, U_y, U_z],
-                                [err_x_body, err_y_body, err_z_body], msg.velocity, msg.angular_velocity)
-        
-        print(U_z, err_z_body)
+                                [err_x_body, err_y_body, err_z_body], self.drone_velocity, self.drone_angular_velocity)
 
-    # Not sure this is nessecary. Could still be able to use scipy's as_euler and as_quat functions
-    def quat2rot(self, w, i, j, k):
-        """Function for converting quaternion to rotation matrix as numpy array"""
-        # Extract the values from Q
-        q0 = w
-        q1 = i
-        q2 = j
-        q3 = k
-     
-    # First row of the rotation matrix
-        r00 = 2 * (q0 * q0 + q1 * q1) - 1
-        r01 = 2 * (q1 * q2 - q0 * q3)
-        r02 = 2 * (q1 * q3 + q0 * q2)
-     
-    # Second row of the rotation matrix
-        r10 = 2 * (q1 * q2 + q0 * q3)
-        r11 = 2 * (q0 * q0 + q2 * q2) - 1
-        r12 = 2 * (q2 * q3 - q0 * q1)
-     
-    # Third row of the rotation matrix
-        r20 = 2 * (q1 * q3 - q0 * q2)
-        r21 = 2 * (q2 * q3 + q0 * q1)
-        r22 = 2 * (q0 * q0 + q3 * q3) - 1
-     
-    # 3x3 rotation matrix
-        rot_matrix = np.array([[r00, r01, r02],
-                                [r10, r11, r12],
-                                [r20, r21, r22]])
-
-        return rot_matrix
-
-    def world_err_to_body_err(self, rot_matrix, err_array):
+    def world_err_to_body_err(self, rpy, err_array):
         """Transforms error in world fram to error in body frame"""
-        err_x_body, err_y_body, err_z_body = np.matmul(rot_matrix.transpose(), err_array)
-        return err_x_body, err_y_body, err_z_body, np.float32(rot_matrix)
+        err_x_body, err_y_body, err_z_body = np.matmul(rpy.as_matrix().transpose(), err_array)
+        return err_x_body, err_y_body, err_z_body
 
     def update_quaternion(self, time):
         """Updates quaternion setpoint for smooth attitude tracking."""
-        if time < 8.0:
-            rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
-        elif time >= 8.0 and time <= 16.0:
-            rot_d = R.from_euler('zxy', [((time - 8.0)/8.0)*180.0, 0.0, 0.0], degrees=True)
-        elif time >= 16.0 and time <= 24.0:
-            rot_d = R.from_euler('zxy', [180.0, ((time - 16.0)/8.0)*180.0, 0.0], degrees=True)
-        elif time >= 24.0 and time <= 32.0:
-            rot_d = R.from_euler('zxy', [180.0, 180.0, ((time - 24.0)/8.0)*180.0], degrees=True)
-        else:
-            rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+        # Hold attitude @ 0 pitch/roll/yaw
+        # rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+
+        # Pitch to +10 degrees and hold
+        # if time < 10.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+        # elif time >= 10.0 and time <= 20.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 10.0*((time - 10.0)/10.0)], degrees=True)
+        # else:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 10.0], degrees=True)
+
+        #Pitch +-5 degrees over 30 seconds, hold at 0 rotation at the end
+        # if time < 10.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+        # elif time >= 10.0 and time <= 40.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, np.sin(4*math.pi*((time - 10.0)/30.0))*5.0], degrees=True)
+        # else:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
         
+        #Roll +-5 degrees over 30 seconds, hold at 0 rotation after
+        # if time < 10.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+        # elif time >= 10.0 and time <= 40.0:
+        #     rot_d = R.from_euler('zxy', [0.0, np.sin(4*math.pi*((time - 10.0)/30.0))*5.0, 0.0], degrees=True)
+        # else:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
+
+        # Pitch +90 degrees, and back down to level
+        # if time < 10.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+        # elif time >= 10.0 and time <= 30.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 90.0*((time - 10.0)/20.0)], degrees=True)
+        # elif time >= 30.0 and time <= 50.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 90 - 90.0*((time - 30.0)/20.0)], degrees=True)
+        # else:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
+
+        # Roll +90 degrees, and back down to level
+        # if time < 10.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+        # elif time >= 10.0 and time <= 30.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 90.0*((time - 10.0)/20.0), 0.0], degrees=True)
+        # elif time >= 30.0 and time <= 50.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 90 - 90.0*((time - 30.0)/20.0), 0.0], degrees=True)
+        # else:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
+
+        # 90 Pitch, 90 Yaw, 90 Roll (20 seconds each)
+        # if time < 10.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+        # elif time >= 10.0 and time <= 30.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 90.0*((time - 10.0)/20.0)], degrees=True)
+        # elif time >= 30.0 and time <= 50.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 90.0*((time - 30.0)/20.0), 90.0], degrees=True)
+        # elif time > 50.0 and time <= 70.0:
+        #     rot_d = R.from_euler('zxy', [-90.0*((time - 50.0)/20.0), 90.0, 90.0], degrees=True)
+        # else:
+        #     rot_d = R.from_euler('zxy', [-90.0, 90.0, 90.0], degrees=True)
+
+        # Slowly rotate 180 degrees around every axis individually
+        # if time < 8.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+        # elif time >= 8.0 and time <= 24.0:
+        #     rot_d = R.from_euler('zxy', [0.0, ((time - 8.0)/16.0)*180.0, 0.0], degrees=True)
+        # elif time >= 24.0 and time <= 40.0:
+        #     rot_d = R.from_euler('zxy', [((time - 24.0)/16.0)*180.0, 180.0, 0.0], degrees=True)
+        # elif time >= 40.0 and time <= 56.0:
+        #     rot_d = R.from_euler('zxy', [180.0, 180.0, ((time - 40.0)/16.0)*180.0], degrees=True)
+        # else:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+
+        # 360 Degrees about 2 axes at once
+        if time < 10.0:
+            rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+        elif time >= 10.0 and time <= 50.0:
+            rot_d = R.from_euler('zxy', [0.0, 360.0*((time - 10.0)/40.0), 360.0*((time - 10.0)/40.0)], degrees=True)
+        else:
+            rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
+
         self.q_d = np.float32([rot_d.as_quat()[3], rot_d.as_quat()[0], rot_d.as_quat()[1], rot_d.as_quat()[2]])
-        self.q_d = np.float32(rot_d.as_quat())
         return self.q_d
+
 
     def update_goal(self, time):
         """Updates position setpoint for smooth position tracking."""
-        # Fly a square with corners at (0,0), (8,0), (8,8), (0,8)
-        # should take 8 seconds per side
+        # Slowly ascend to 0.8m over 8 seconds and hold
+        # if time <= 8.0:
+        #     self.goal = np.float32([self.start_pos[0], self.start_pos[1], -0.25 + -0.35*(time/8.0)])
+        # else:
+        #     self.goal = np.float32([self.start_pos[0], self.start_pos[1], -0.6])
+
         if time <= 8.0:
-            self.goal = [0.0, 0.0, -5.0*(time/8.0)]
-        # elif time >= 8.0 and time <= 16.0:
-        #     self.goal = [0.0 + (time - 8.0), 0.0, -5.0]
-        # elif time >= 16.0 and time <= 24.0:
-        #     self.goal = [8.0, 0.0 + (time - 16.0), -5.0]
-        # elif time >= 24.0 and time <= 32.0:
-        #     self.goal = [8.0 - (time - 24.0), 8.0, -5.0]
-        # elif time >= 32.0 and time <= 40.0:
-        #     self.goal = [0.0, 8.0 - (time - 32.0), -5.0]
-        elif time > 8.0:
-            self.goal = [0.0, 0.0, -5.0]
+            self.goal = np.float32([0.0, 0.0, -0.6*(time/8.0)])
+        else:
+            self.goal = np.float32([0.0, 0.0, -0.6])
+
+        # Slowly ascend to 0.7m, slide left and right, hold @ origin
+        # if time <= 8.0:
+        #     self.goal = np.float32([0.0, 0.0, -0.7*(time/8.0)])
+        # elif time > 8.0 and time <= 12.0:
+        #     self.goal = np.float32([0.0, 1.0*((time - 8.0)/4.0), -0.7])
+        # elif time > 12.0 and time <= 20.0:
+        #     self.goal = np.float32([0.0, 1.0 - 2.0*((time - 12.0)/8.0), -0.7])
+        # elif time > 20.0 and time <= 24.0:
+        #     self.goal = np.float32([0.0, -1.0 + 1.0*((time - 20.0)/4.0), -0.7])
+        # else:
+        #     self.goal = [0.0, 0.0, -0.7]
+
+        # Slowly ascend to 0.7m, slide forward and backward, hold @ origin
+        # if time <= 8.0:
+        #     self.goal = np.float32([0.0, 0.0, -0.7*(time/8.0)])
+        # elif time > 8.0 and time <= 12.0:
+        #     self.goal = np.float32([1.0*((time - 8.0)/4.0), 0.0, -0.7])
+        # elif time > 12.0 and time <= 20.0:
+        #     self.goal = np.float32([1.0 - 2.0*((time - 12.0)/8.0), 0.0, -0.7])
+        # elif time > 20.0 and time <= 24.0:
+        #     self.goal = np.float32([-1.0 + 1.0*((time - 20.0)/4.0), 0.0, -0.7])
+        # else:
+        #     self.goal = [0.0, 0.0, -0.7], np.float32(rot_matrix)
+
+        # Slowly ascend to 0.5m, slide around a 1m square
+        # if time <= 8.0:
+        #     self.goal = np.float32([0.0, 0.0, -0.7*(time/8.0)])
+        # elif time > 8.0 and time <= 12.0:
+        #     self.goal = np.float32([0.0, -1.0*((time - 8.0)/4.0), -0.7])
+        # elif time > 12.0 and time <= 16.0:
+        #     self.goal = np.float32([-1.0*((time - 12.0)/4.0), -1.0, -0.7])
+        # elif time > 16.0 and time <= 20.0:
+        #     self.goal = np.float32([-1.0, -1.0 + 1.0*((time - 16.0)/4.0), -0.7])
+        # elif time > 20.0 and time <= 24.0:
+        #     self.goal = np.float32([-1.0 + 1.0*((time - 20.0)/4.0), 0.0, -0.7])
+        # else:
+        #     self.goal = [0.0, 0.0, -0.7]
+
+        # # Fly a square with corners at (0,0), (8,0), (8,8), (0,8)
+        # # should take 8 seconds per side
+        # if time <= 8.0:
+        #     self.goal = [0.0, 0.0, -5.0*(time/8.0)]
+        # # elif time >= 8.0 and time <= 16.0:
+        # #     self.goal = [0.0 + (time - 8.0), 0.0, -5.0]
+        # # elif time >= 16.0 and time <= 24.0:
+        # #     self.goal = [8.0, 0.0 + (time - 16.0), -5.0]
+        # # elif time >= 24.0 and time <= 32.0:
+        # #     self.goal = [8.0 - (time - 24.0), 8.0, -5.0]
+        # # elif time >= 32.0 and time <= 40.0:
+        # #     self.goal = [0.0, 8.0 - (time - 32.0), -5.0]
+        # elif time > 8.0:
+        #     self.goal = [0.0, 0.0, -5.0]
         return self.goal
 
     def vehicle_status_callback(self, vehicle_status):
@@ -264,6 +359,28 @@ class OffboardControl(Node):
         """Switch to land mode."""
         self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
         self.get_logger().info("Switching to land mode")
+
+    def e_land(self):
+        """emergency landing mode for non-vertical orientations"""
+        # Save position and orientation at which emergency landing was triggered
+        if self.saved_pos == False:
+            x0, y0, z0 = self.drone_position
+            q0 = self.drone_orientation
+            self.saved_pos = True
+
+        t = 0.0
+        while self.vehicle_status != 0:
+        # Set new goal position and orientation as the current position and orientation,
+        # lower drone down over 10 seconds, then disarm
+            if t < 2.0:
+                self.goal = np.float32(np.array([x0, y0, z0]))
+                self.q_d = q0
+            elif t >= 2.0:
+                self.goal = np.float32(np.array([x0, y0, z0 - z0*((t - 2.0)/10.0)]))
+                print(self.drone_position[2])
+            self.PID_controller()
+            time.sleep(0.01)
+            t += 0.01
 
     def publish_offboard_control_heartbeat_signal(self):
         """Publish the offboard control mode."""
@@ -340,16 +457,12 @@ class OffboardControl(Node):
         if self.offboard_setpoint_counter < 11:
             self.offboard_setpoint_counter += 1
 
-        # if self.offboard_setpoint_counter >= 11:
-        #     self.now += 0.1
-        #     self.update_goal(self.now)
-        #     self.update_quaternion(self.now)
-
     def traj_timer_callback(self) -> None:
         """Callback function for updating vehicle trajectory"""
 
         if self.offboard_setpoint_counter >= 11:
-            self.now += 0.005
+            self.now += 0.01
+            self.PID_controller()
             self.update_goal(self.now)
             self.update_quaternion(self.now)
 
@@ -360,9 +473,10 @@ def main(args=None) -> None:
         offboard_control = OffboardControl()
         rclpy.spin(offboard_control)
     except KeyboardInterrupt:
-        offboard_control.get_logger().info('Keyboard interrupt, shutting down.\n')
+        offboard_control.get_logger().info('Keyboard interrupt, triggering landing sequence.\n')
 
     offboard_control.land()
+    #offboard_control.e_land()
     offboard_control.destroy_node()
     rclpy.shutdown()
 

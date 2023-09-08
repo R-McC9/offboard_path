@@ -25,6 +25,7 @@ setup(
             'offboard_ctrl_hex = offboard_path.offboard_ctrl_hex:main',
             'offboard_ctrl_hex_LQR = offboard_path.offboard_ctrl_hex_LQR:main',
             'offboard_ctrl_attitude = offboard_path.offboard_ctrl_attitude:main',
+            'offboard_ctrl_quad_pos = offboard_path.offboard_ctrl_quad_pos:main',
             'odom_logger = offboard_path.odom_logger:main'
         ],
     },
