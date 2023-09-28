@@ -102,13 +102,13 @@ class OffboardControl(Node):
 
         # Vertical Figure 8
         # if time <= 8.0:
-        #     self.goal = [0.0, 0.0, -1.0*(time/8.0)]
+        #     self.goal = [0.0, 0.0, -0.8*(time/8.0)]
         # elif time > 8.0 and time <= 30.0:
         #     self.goal = [(np.cos(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))) / (1.0 + np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))**2), 
         #                             0.0, 
-        #                             -1.0 + (np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2)) * np.cos(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))) / (1.0 + np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))**2)]
+        #                             -0.8 + (np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2)) * np.cos(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))) / (1.0 + np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))**2)]
         # else:
-        #     self.goal = [0.0, 0.0, -1.0]
+        #     self.goal = [0.0, 0.0, -0.8]
 
     def vehicle_local_position_callback(self, vehicle_local_position):
         """Callback function for vehicle_local_position topic subscriber."""

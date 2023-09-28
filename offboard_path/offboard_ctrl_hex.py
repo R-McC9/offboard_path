@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from multiprocessing.context import _force_start_method
+from re import S
 import numpy as np
 import math
 from scipy.spatial.transform import Rotation as R
@@ -62,10 +63,10 @@ class OffboardControl(Node):
             VehicleStatus, '/fmu/out/vehicle_status', self.vehicle_status_callback, qos_profile)
 
         # Subscriber for force/torque feedback
-        self.force_torque_subscriber_sim = self.create_subscription(
-            WrenchStamped, '/wrench', self.force_torque_callback_sim, gazebo_qos)
-        # self.force_torque_subscriber = self.create_subscription(
-        #     WrenchStamped, '/bus0/ft_sensor0/ft_sensor_readings/wrench', self.force_torque_callback, 10)
+        # self.force_torque_subscriber_sim = self.create_subscription(
+        #     WrenchStamped, '/wrench', self.force_torque_callback_sim, gazebo_qos)
+        self.force_torque_subscriber = self.create_subscription(
+            WrenchStamped, '/bus0/ft_sensor0/ft_sensor_readings/wrench', self.force_torque_callback, 10)
 
         # Position data for the object
         self.board_subscriber_ = self.create_subscription(
@@ -88,6 +89,7 @@ class OffboardControl(Node):
         self.hybrid = False
         self.start_pos = [0.0, 0.0, 0.0]
         self.drone_position = [0.0, 0.0, 0.0]
+        self.drone_position_4pt = [0.0, 0.0, 0.0]
         self.drone_orientation = [1.0, 0.0, 0.0, 0.0]
         self.q_d = [1.0, 0.0, 0.0, 0.0]
 
@@ -119,13 +121,13 @@ class OffboardControl(Node):
         self.current_T_y = 0.0
         self.current_T_z = 0.0
 
-        self.board_pos = [1.0, 1.0, 0.0]
-        self.board_ori = [1.0, 0.0, 0.0, 0.0]
+        self.board_pos = [1.554, -0.069, 1.094]
+        self.board_ori = [0.9999, 0.00165, 0.000656, 0.00325]
         self.dtb = [0.0, 0.0, 0.0]
 
     def PID_position_control(self):
         """PID for basic position control"""
-        x, y, z = self.drone_position
+        x, y, z = self.drone_position_4pt
         w, i, j, k = self.drone_orientation
 
         kpz = 0.6
@@ -163,17 +165,17 @@ class OffboardControl(Node):
 
         U_z_max = -1.0
 
-        U_x_max = -0.5
-        U_y_max = -0.5
+        U_x_max = -0.3
+        U_y_max = -0.3
 
         # Clamp integral error term when motors are saturated
         if U_z <= U_z_max or U_z >= 0.0:
             U_z = np.clip(U_z, -1.0, 0.0)
             self.err_sum_z = 0
 
-        # apply minimum throttle value to prevent chattering at takeoff
-        if U_z >= -0.1 and U_z <= 0.0:
-            U_z = -0.1
+        # # apply minimum throttle value to prevent chattering at takeoff
+        # if U_z >= -0.1 and U_z <= 0.0:
+        #     U_z = -0.1
 
         self.prev_err_z = err_z_body
 
@@ -204,10 +206,11 @@ class OffboardControl(Node):
         # rot_d = rot_d.as_quat()
         # self.q_d = np.float32([rot_d[3], rot_d[0], rot_d[1], rot_d[2]])
         # self.q_d = [1.0, 0.0, 0.0, 0.0]
-        # self.goal = [0.0, 0.0, -0.6]
-        self.publish_attitude_setpoint(self.q_d, [U_x, U_y, U_z])
+        #self.goal = [0.0, 0.0, -0.6]
+        self.publish_attitude_setpoint(self.q_d, [round(U_x, 4), round(U_y, 4), round(U_z, 4)])
 
         # print(self.start_pos)
+        #print(round(U_z, 4))
 
         self.publish_control_data(self.drone_position, self.drone_orientation, self.goal, self.q_d, [err_x_body, err_y_body, err_z_body],
                                [U_x, U_y, U_z], self.drone_velocity, self.drone_ang_vel)
@@ -217,20 +220,20 @@ class OffboardControl(Node):
         # Switch into hybrid control scheme AFTER approaching the target object to a safe distance
         # Use the same PID math to govern altitude and Y position
         # Use a desired force setpoint, self.force_d, to govern U_x
-        x, y, z = self.drone_position
+        x, y, z = self.drone_position_4pt
         w, i, j, k = self.drone_orientation
 
         kpz = 0.6
         kiz = 0.006
         kdz = 20
 
-        kpx = 0.07
-        kix = 0.0002
-        kdx = 30
+        kpx = 0.05
+        kix = 0.0
+        kdx = 0.0
 
         kpy = 0.7
-        kiy = 0.0002
-        kdy = 30
+        kiy = 0.002
+        kdy = 15
 
         # X, Y position control
         # Calculate rotation matrix from quaternion
@@ -253,10 +256,10 @@ class OffboardControl(Node):
 
         U_z = kpz * err_z_body + kiz * self.err_sum_z + kdz * err_dif_z
 
-        U_z_max = -0.7
+        U_z_max = -1.0
 
-        U_x_max = -0.1
-        U_y_max = -0.1
+        U_x_max = -0.3
+        U_y_max = -0.3
 
         # Clamp integral error term when motors are saturated
         if U_z <= U_z_max or U_z >= 0.0:
@@ -286,7 +289,8 @@ class OffboardControl(Node):
         # Force controller
         # Calculate error in desired force and actual force (!!!Change make sure this is correct when switching to reality!!!!
         # +X in the gazebo sim may not be +X in real life!)
-        err_F = self.force_d - self.current_F_x
+        # err_F = self.force_d - self.current_F_x
+        err_F = self.force_d - self.current_F_z
 
         self.err_sum_F += err_F
 
@@ -298,7 +302,7 @@ class OffboardControl(Node):
 
         # Clamp integral error term when motors are saturated
         # bound the U_x input so that the drone doesn't bounce too much against the wall
-        if U_x <= -0.0 or U_x >= -U_x_max:
+        if U_x <= U_x_max or U_x >= -U_x_max:
             U_x = np.clip(U_x, -0.0, -U_x_max)
             self.err_sum_F = 0
 
@@ -310,6 +314,7 @@ class OffboardControl(Node):
     def vehicle_odometry_callback(self, msg):
         """Callbackfunction for vehicle_odometry topic subscriber."""
         self.drone_position = msg.position
+        self.drone_position_4pt = [round(self.drone_position[0], 4), round(self.drone_position[1], 4), round(self.drone_position[2], 4)]
         self.drone_orientation = msg.q
         
         self.drone_velocity = msg.velocity
@@ -360,18 +365,34 @@ class OffboardControl(Node):
 
     def board_pose_callback(self, msg):
         """Callback function for getting position of the board"""
-        self.board_pos = msg.position
-        self.board_ori = msg.orientation
+        self.board_pos = [round(msg.position.x, 4), round(msg.position.y, 4), round(msg.position.z, 4)]
+        self.board_ori = [msg.orientation.w, msg.orientation.x, msg.orientation.y, msg.orientation.z]
+        # print(self.board_ori)
 
     def update_quaternion(self, time):
         """Updates quaternion setpoint for smooth attitude tracking."""
         # Hold attitude @ 0 pitch/roll/yaw
-        if time < 8.0:
+        if time < 10.0:
             rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
-        elif time >= 8.0 and time < 12.0:
-            rot_d = R.from_euler('zxy', [0.0, 0.0, 5.0*((time - 8.0)/4.0)], degrees=True)
+        elif time >= 10.0 and time < 40.0:
+            rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
         else:
-            rot_d = R.from_euler('zxy', [0.0, 0.0, 5.0], degrees=True)
+            rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
+
+        # if time < 10.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
+        # elif time >= 10.0 and time < 40.0:
+        #     rot_d = R.from_euler('zxy', [0.0, np.sin(4*math.pi*((time - 10.0)/30.0))*5.0, 0.0], degrees=True)
+        # else:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
+
+        # Start pitch at 4 seconds
+        # if time < 4.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
+        # elif time >= 4.0 and time < 8.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, -5.0*((time - 4.0)/4.0)], degrees=True)
+        # else:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, -5.0], degrees=True)
 
         #Pitch +-5 degrees over 30 seconds, hold at 0 rotation at the end
         # if time < 10.0:
@@ -396,6 +417,12 @@ class OffboardControl(Node):
         #     rot_d = R.from_euler('zxy', [0.0, np.sin(4*math.pi*((time - 10.0)/30.0))*5.0, 0.0], degrees=True)
         # else:
         #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
+
+        #Yaw correction for contacting the board
+        # if time < 10.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
+        # elif time >= 10.0:
+        #     rot_d = R.from_quat([self.board_ori[1], self.board_ori[2], self.board_ori[3], self.board_ori[0]])
         
         self.q_d = np.float32([rot_d.as_quat()[3], rot_d.as_quat()[0], rot_d.as_quat()[1], rot_d.as_quat()[2]])
         return self.q_d
@@ -432,6 +459,20 @@ class OffboardControl(Node):
         # else:
         #     self.goal = [0.0, 0.0, -0.8]
 
+        #Ascend and descend
+        # if time <= 4.0:
+        #     self.goal = [0.0, 0.0, -1.0*(time/4.0)]
+        # elif time > 4.0 and time <= 8.0:
+        #     self.goal = [0.0, 0.0, -1.0]
+        # elif time > 8.0 and time <= 12.0:
+        #     self.goal = [0.0, 0.0, -1.0 - 0.5*((time - 8.0)/4.0)]
+        # elif time > 12.0 and time <= 20.0:
+        #     self.goal = [0.0, 0.0, -1.5 + 1.0*((time - 12.0)/8.0)]
+        # elif time > 20.0 and time <= 24.0:
+        #     self.goal = [0.0, 0.0, -0.5 - 0.5*((time - 20.0)/4.0)]
+        # else:
+        #     self.goal = [0.0, 0.0, -1.0]
+
         # Slowly ascend to 0.5m, slide around a 1m square
         # if time <= 8.0:
         #     self.goal = np.float32([0.0, 0.0, -0.7*(time/8.0)])
@@ -446,29 +487,27 @@ class OffboardControl(Node):
         # else:
         #     self.goal = [0.0, 0.0, -0.7]
 
-        # Slowly ascend, trace a circle with 0.75 meter radius
-        if time <= 8.0:
-            self.goal = [0.0, 0.0, -0.8*(time/8.0)]
-        elif time > 8.0 and time <= 16.0:
-            self.goal = [0.0, 0.0, -0.8]
-        elif time > 16.0 and time <= 20.0:
-            self.goal = [-0.75*((time - 16.0)/4.0), 0.0, -0.8]
-        elif time > 20.0 and time <= 44.0:
-            self.goal = [-0.75*np.cos(2*np.pi*((time - 20.0)/24.0)), 0.75*np.sin(2*np.pi*(time-20.0)/24.0), -0.8]
-        elif time > 44.0 and time <= 48.0:
-            self.goal = [-0.75 + 0.75*((time - 44.0)/4.0), 0.0, -0.8]
-        else:
-            self.goal = [0.0, 0.0, -0.8]
+        # Slowly ascend, trace a circle with 1 meter radius
+        # if time <= 8.0:
+        #     self.goal = [0.0, 0.0, -0.8*(time/8.0)]
+        # elif time > 8.0 and time <= 12.0:
+        #     self.goal = [-1.0*((time - 8.0)/4.0), 0.0, -0.8]
+        # elif time > 12.0 and time <= 36.0:
+        #     self.goal = [-1.0*np.cos(2*np.pi*((time - 12.0)/24.0)), 1.0*np.sin(2*np.pi*(time-12.0)/24.0), -0.8]
+        # elif time > 36.0 and time <= 40.0:
+        #     self.goal = [-1.0 + 1.0*((time - 36.0)/4.0), 0.0, -0.8]
+        # else:
+        #     self.goal = [0.0, 0.0, -0.8]
 
         # Slowly ascend to 0.5m, trace a vertical figure eight
-        # if time <= 8.0:
-        #     self.goal = [0.0, 0.0, -1.0*(time/8.0)]
-        # elif time > 8.0 and time <= 30.0:
-        #     self.goal = [(np.cos(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))) / (1.0 + np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))**2), 
-        #                             0.0, 
-        #                             -1.0 + (np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2)) * np.cos(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))) / (1.0 + np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))**2)]
-        # else:
-        #     self.goal = [0.0, 0.0, -1.0]
+        if time <= 8.0:
+            self.goal = [0.0, 0.0, -0.8*(time/8.0)]
+        elif time > 8.0 and time <= 30.0:
+            self.goal = [(np.cos(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))) / (1.0 + np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))**2), 
+                                    0.0, 
+                                    -0.8 + (np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2)) * np.cos(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))) / (1.0 + np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))**2)]
+        else:
+            self.goal = [0.0, 0.0, -0.8]
 
         # Ascend to 0.8 meters, approach the board, make contact, back away
         # if time < 8.0:
@@ -489,6 +528,25 @@ class OffboardControl(Node):
         #     self.hybrid = False
         #     self.goal = [1.0 + self.board_pos[0] - 0.35, 0.0, -0.8]
 
+        #Ascend to middle of board, center/align self normal to board, approach slowly, engage hybrid control, back away, land
+        # if time <= 8.0:
+        #     self.goal = [0.0, 0.0, -self.board_pos[2]*(time/8.0)]
+        # elif time > 8.0 and time <= 16.0:
+        #     self.goal = [0.0, self.board_pos[1]*((time -8.0)/8.0), -self.board_pos[2]]
+        # elif time > 16.0 and time <= 26.0:
+        #     self.goal = [(self.board_pos[0] - 0.7)*((time - 16.0)/10.0), self.board_pos[1], -self.board_pos[2]]
+        # elif time > 26.0 and time <= 36.0:
+        #     self.hybrid = True
+
+        #     self.goal = [self.board_pos[0] - 0.7, self.board_pos[1], -self.board_pos[2]]
+        # elif time > 36.0 and time <= 44.0:
+        #     self.hybrid = False
+
+        #     self.goal = [(self.board_pos[0] - 0.7) - (self.board_pos[0] - 0.7)*((time - 36.0)/8.0), self.board_pos[1], -self.board_pos[2]]
+        # else:
+        #     self.goal = [0.0, self.board_pos[1], -self.board_pos[2]]
+
+        self.goal = [round(self.goal[0], 3), round(self.goal[1], 3), round(self.goal[2], 3)]
         print(self.goal)
         return self.goal
     

@@ -210,6 +210,30 @@ class OffboardControl(Node):
         # else:
         #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
 
+        #Pitch 360 Degrees over 30 seconds
+        # if time < 10.0:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0])
+        # elif time >= 10.0 and time <= 40.0:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 360.0*((time - 10.0)/30.0)], degrees=True)
+        # else:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0], degrees=True)
+
+        #Roll 360 Degrees over 30 seconds
+        # if time < 10.0:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0])
+        # elif time >= 10.0 and time <= 40.0:
+        #     rot_d = R.from_euler('ZXY', [0.0, 360.0*((time - 10.0)/30.0), 0.0], degrees=True)
+        # else:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0], degrees=True)
+
+        #Yaw 360 Degrees over 30 seconds
+        # if time < 10.0:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0])
+        # elif time >= 10.0 and time <= 40.0:
+        #     rot_d = R.from_euler('ZXY', [360.0*((time - 10.0)/30.0), 0.0, 0.0], degrees=True)
+        # else:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0], degrees=True)
+
         # Pitch +90 degrees, and back down to level
         # if time < 10.0:
         #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
@@ -230,37 +254,48 @@ class OffboardControl(Node):
         # else:
         #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
 
-        # 90 Pitch, 90 Yaw, 90 Roll (20 seconds each)
+        # 90 Pitch, 90 Yaw, 90 Roll (10 seconds each)
         # if time < 10.0:
         #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
-        # elif time >= 10.0 and time <= 30.0:
-        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 90.0*((time - 10.0)/20.0)], degrees=True)
-        # elif time >= 30.0 and time <= 50.0:
-        #     rot_d = R.from_euler('zxy', [0.0, 90.0*((time - 30.0)/20.0), 90.0], degrees=True)
-        # elif time > 50.0 and time <= 70.0:
-        #     rot_d = R.from_euler('zxy', [-90.0*((time - 50.0)/20.0), 90.0, 90.0], degrees=True)
+        # elif time >= 10.0 and time <= 20.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 90.0*((time - 10.0)/10.0)], degrees=True)
+        # elif time >= 20.0 and time <= 30.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 90.0*((time - 20.0)/10.0), 90.0], degrees=True)
+        # elif time > 30.0 and time <= 40.0:
+        #     rot_d = R.from_euler('zxy', [-90.0*((time - 30.0)/10.0), 90.0, 90.0], degrees=True)
         # else:
         #     rot_d = R.from_euler('zxy', [-90.0, 90.0, 90.0], degrees=True)
 
         # Slowly rotate 180 degrees around every axis individually
         # if time < 8.0:
         #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
-        # elif time >= 8.0 and time <= 24.0:
-        #     rot_d = R.from_euler('zxy', [0.0, ((time - 8.0)/16.0)*180.0, 0.0], degrees=True)
-        # elif time >= 24.0 and time <= 40.0:
-        #     rot_d = R.from_euler('zxy', [((time - 24.0)/16.0)*180.0, 180.0, 0.0], degrees=True)
-        # elif time >= 40.0 and time <= 56.0:
-        #     rot_d = R.from_euler('zxy', [180.0, 180.0, ((time - 40.0)/16.0)*180.0], degrees=True)
+        # elif time >= 8.0 and time <= 28.0:
+        #     rot_d = R.from_euler('zxy', [0.0, ((time - 8.0)/20.0)*180.0, 0.0], degrees=True)
+        # elif time >= 28.0 and time <= 48.0:
+        #     rot_d = R.from_euler('zxy', [-1*((time - 28.0)/20.0)*180.0, 180.0, 0.0], degrees=True)
+        # elif time >= 48.0 and time <= 68.0:
+        #     rot_d = R.from_euler('zxy', [-180.0, 180.0, ((time - 48.0)/20.0)*180.0], degrees=True)
         # else:
         #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
 
-        # 360 Degrees about 2 axes at once
-        if time < 10.0:
-            rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
-        elif time >= 10.0 and time <= 50.0:
-            rot_d = R.from_euler('zxy', [0.0, 360.0*((time - 10.0)/40.0), 360.0*((time - 10.0)/40.0)], degrees=True)
+        if time < 8.0:
+            rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0])
+        elif time >= 8.0 and time <= 23.0:
+            rot_d = R.from_euler('ZXY', [0.0, ((time - 8.0)/15.0)*360.0, 0.0], degrees=True)
+        elif time >= 23.0 and time <= 38.0:
+            rot_d = R.from_euler('ZXY', [((time - 23.0)/15.0)*360.0, 0.0, 0.0], degrees=True)
+        elif time >= 38.0 and time <= 53.0:
+            rot_d = R.from_euler('ZXY', [0.0, 0.0, ((time - 38.0)/15.0)*360.0], degrees=True)
         else:
-            rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
+            rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0])
+
+        # 360 Degrees about 2 axes at once
+        # if time < 10.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+        # elif time >= 10.0 and time <= 50.0:
+        #     rot_d = R.from_euler('zxy', [0.0, 360.0*((time - 10.0)/40.0), 360.0*((time - 10.0)/40.0)], degrees=True)
+        # else:
+        #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
 
         self.q_d = np.float32([rot_d.as_quat()[3], rot_d.as_quat()[0], rot_d.as_quat()[1], rot_d.as_quat()[2]])
         return self.q_d
@@ -275,7 +310,7 @@ class OffboardControl(Node):
         #     self.goal = np.float32([self.start_pos[0], self.start_pos[1], -0.6])
 
         if time <= 8.0:
-            self.goal = np.float32([0.0, 0.0, -0.6*(time/8.0)])
+            self.goal = np.float32([0.0, 0.0, -0.25 + -0.35*(time/8.0)])
         else:
             self.goal = np.float32([0.0, 0.0, -0.6])
 
