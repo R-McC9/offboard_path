@@ -12,7 +12,9 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPo
 from px4_msgs.msg import (OffboardControlMode, TrajectorySetpoint,
                           VehicleCommand, VehicleControlMode,
                           VehicleLocalPosition, VehicleStatus,
-                          VehicleOdometry, VehicleAttitudeSetpoint)
+                          VehicleOdometry, VehicleAttitudeSetpoint,
+                          VehicleThrustSetpoint, VehicleTorqueSetpoint,
+                          ActuatorMotors, ActuatorOutputs)
 
 from offboard_msgs.msg import ControlData
 
@@ -49,8 +51,25 @@ class OffboardControl(Node):
             VehicleOdometry, '/fmu/out/vehicle_odometry', self.vehicle_odometry_callback, qos_profile)
         self.vehicle_status_subscriber = self.create_subscription(
             VehicleStatus, '/fmu/out/vehicle_status', self.vehicle_status_callback, qos_profile)
+        # self.thrust_setpoint_subscriber = self.create_subscription(
+        #     VehicleThrustSetpoint, '/fmu/in/vehicle_thrust_setpoint', self.thrust_setpoint_callback, qos_profile)
+        # self.torque_setpoint_subscriber = self.create_subscription(
+        #     VehicleTorqueSetpoint, '/fmu/in/vehicle_thrust_setpoint', self.torque_setpoint_callback, qos_profile)
+        # self.actuator_motors_subscriber = self.create_subscription(
+        #     ActuatorMotors, '/fmu/out/actuator_motors', self.actuator_motors_callback, qos_profile)
+        self.actuator_Outputs_subscriber = self.create_subscription(
+            ActuatorOutputs, '/fmu/out/actuator_outputs', self.actuator_outputs_callback, qos_profile)
 
-        # Initialize variables
+        # Create parameters
+
+        # self.declare_parameter('trajectoryCSV', 'unassigned')
+
+        # self.trajectory_CSV = self.get_parameter('trajectoryCSV').get_parameter_value().string_value
+
+        # if self.trajectory_CSV == '':
+
+
+        ## Initialize variables ##
         self.offboard_setpoint_counter = 0
         self.vehicle_local_position = VehicleLocalPosition()
         self.vehicle_status = VehicleStatus()
@@ -82,6 +101,12 @@ class OffboardControl(Node):
 
         self.drone_velocity = [0.0, 0.0, 0.0]
         self.drone_angular_velocity = [0.0, 0.0, 0.0]
+
+        # self.thrust_setpoint = [0.0, 0.0, 0.0]
+        # self.torque_setpoint = [0.0, 0.0, 0.0]
+
+        # self.actuator_motors = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        self.actuator_outputs = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
         self.e_land_triggered = False
         self.saved_pos = False
@@ -174,7 +199,8 @@ class OffboardControl(Node):
         # Publish control data to different topic for graphing/debugging
         self.publish_control_data(self.drone_position, self.drone_orientation, 
                                 self.goal, self.q_d, [U_x, U_y, U_z],
-                                [err_x_body, err_y_body, err_z_body], self.drone_velocity, self.drone_angular_velocity)
+                                [err_x_body, err_y_body, err_z_body], self.drone_velocity, self.drone_angular_velocity,
+                                self.actuator_outputs)
 
     def world_err_to_body_err(self, rpy, err_array):
         """Transforms error in world fram to error in body frame"""
@@ -278,16 +304,30 @@ class OffboardControl(Node):
         # else:
         #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
 
+        # Rotate 360 Degrees about every axis individually
+        # if time < 8.0:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0])
+        # elif time >= 8.0 and time <= 23.0:
+        #     rot_d = R.from_euler('ZXY', [0.0, ((time - 8.0)/15.0)*360.0, 0.0], degrees=True)
+        # elif time >= 23.0 and time <= 38.0:
+        #     rot_d = R.from_euler('ZXY', [((time - 23.0)/15.0)*360.0, 0.0, 0.0], degrees=True)
+        # elif time >= 38.0 and time <= 53.0:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, ((time - 38.0)/15.0)*360.0], degrees=True)
+        # else:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0])
+
+        # Rotate about axis tangential to the circle
         if time < 8.0:
-            rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0])
-        elif time >= 8.0 and time <= 23.0:
-            rot_d = R.from_euler('ZXY', [0.0, ((time - 8.0)/15.0)*360.0, 0.0], degrees=True)
-        elif time >= 23.0 and time <= 38.0:
-            rot_d = R.from_euler('ZXY', [((time - 23.0)/15.0)*360.0, 0.0, 0.0], degrees=True)
-        elif time >= 38.0 and time <= 53.0:
-            rot_d = R.from_euler('ZXY', [0.0, 0.0, ((time - 38.0)/15.0)*360.0], degrees=True)
-        else:
-            rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0])
+            rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0], degrees=True)
+        elif time > 8.0 and time <= 12.0:
+            rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0], degrees=True)
+        elif time > 12.0 and time <= 36.0:
+            # rotate about a vector tangent to the circle
+            rot_d = R.from_rotvec(np.pi*2*((time - 12.0)/24.0) * np.array([-1.0*np.cos(2*np.pi*((time - 12.0)/24.0)), 1.0*np.sin(2*np.pi*((time-12.0)/24.0)), 0.0]))
+        elif time > 36.0 and time <= 40.0:
+            rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0], degrees=True)
+        elif time > 40.0:
+            rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0], degrees=True)
 
         # 360 Degrees about 2 axes at once
         # if time < 10.0:
@@ -297,10 +337,34 @@ class OffboardControl(Node):
         # else:
         #     rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
 
+        # Rotation for L shaped inspection task
+        # if time <= 8.0:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0], degrees=True)
+        # elif time > 8.0 and time <= 12.0:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0], degrees=True)
+        # elif time > 12.0 and time <= 13.0:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0], degrees=True)
+        # elif time > 13.0 and time <= 17.0:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0], degrees=True)
+        # elif time > 17.0 and time <= 23.0:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 90.0*((time - 17.0)/6.0)], degrees=True)
+        # elif time > 23.0 and time <= 27.0:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 90.0], degrees=True)
+        # elif time > 27.0 and time <= 33.0:
+        #     rot_d = R.from_euler('ZXY', [90.0*((time - 27.0)/6.0), 0.0, 90.0 + 45.0*((time - 27.0)/6.0)], degrees=True)
+        # elif time > 33.0 and time <= 37.0:
+        #     rot_d = R.from_euler('ZXY', [90.0, 0.0, 135.0], degrees=True)
+        # elif time > 37.0 and time <= 43.0:
+        #     rot_d = R.from_euler('ZXY', [90.0 - 90.0*((time - 37.0)/6.0), 0.0, 135.0 - 135.0*((time - 37.0)/6.0)], degrees=True)
+        # elif time > 43.0 and time <= 47.0:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0], degrees=True)
+        # else:
+        #     rot_d = R.from_euler('ZXY', [0.0, 0.0, 0.0], degrees=True)
+
         self.q_d = np.float32([rot_d.as_quat()[3], rot_d.as_quat()[0], rot_d.as_quat()[1], rot_d.as_quat()[2]])
         return self.q_d
 
-
+# Change trajectories to be a selected CSV on startup. Build python script for trajectory to CSV generation
     def update_goal(self, time):
         """Updates position setpoint for smooth position tracking."""
         # Slowly ascend to 0.8m over 8 seconds and hold
@@ -309,10 +373,10 @@ class OffboardControl(Node):
         # else:
         #     self.goal = np.float32([self.start_pos[0], self.start_pos[1], -0.6])
 
-        if time <= 8.0:
-            self.goal = np.float32([0.0, 0.0, -0.25 + -0.35*(time/8.0)])
-        else:
-            self.goal = np.float32([0.0, 0.0, -0.6])
+        # if time <= 8.0:
+        #     self.goal = np.float32([0.0, 0.0, -0.25 + -0.35*(time/8.0)])
+        # else:
+        #     self.goal = np.float32([0.0, 0.0, -0.60])
 
         # Slowly ascend to 0.7m, slide left and right, hold @ origin
         # if time <= 8.0:
@@ -337,6 +401,42 @@ class OffboardControl(Node):
         #     self.goal = np.float32([-1.0 + 1.0*((time - 20.0)/4.0), 0.0, -0.7])
         # else:
         #     self.goal = [0.0, 0.0, -0.7], np.float32(rot_matrix)
+
+        # Circle @ 1 meter radius
+        if time <= 8.0:
+            self.goal = [0.0, 0.0, -0.8*(time/8.0)]
+        elif time > 8.0 and time <= 12.0:
+            self.goal = [-1.0*((time - 8.0)/4.0), 0.0, -0.8]
+        elif time > 12.0 and time <= 36.0:
+            self.goal = [-1.0*np.cos(2*np.pi*((time - 12.0)/24.0)), 1.0*np.sin(2*np.pi*(time-12.0)/24.0), -0.8]
+        elif time > 36.0 and time <= 40.0:
+            self.goal = [-1.0 + 1.0*((time - 36.0)/4.0), 0.0, -0.8]
+        else:
+            self.goal = [0.0, 0.0, -0.8]
+
+        # Right angle path
+        # if time <= 8.0:
+        #     self.goal = [0.0, 0.0, -0.8*(time/8.0)]
+        # elif time > 8.0 and time <= 12.0:
+        #     self.goal = [-1.0*((time - 8.0)/4.0), 0.0, -0.8]
+        # elif time > 12.0 and time <= 13.0:
+        #     self.goal = [-1.0, 0.0, -0.8]
+        # elif time > 13.0 and time <= 17.0:
+        #     self.goal = [-1.0 + 1.0*((time - 13.0)/4.0), 0.0, -0.8]
+        # elif time > 17.0 and time <= 23.0:
+        #     self.goal = [0.0, 0.0, -0.8]
+        # elif time > 23.0 and time <= 27.0:
+        #     self.goal = [0.0, 0.0, -0.8 - 1.0*((time - 23.0)/4.0)]
+        # elif time > 27.0 and time <= 33.0:
+        #     self.goal = [0.0, 0.0, -1.8]
+        # elif time > 33.0 and time <= 37.0:
+        #     self.goal = [1.0*((time - 33.0)/4.0), 0.0, -1.8]
+        # elif time > 37.0 and time <= 43.0:
+        #     self.goal = [1.0, 0.0, -1.8]
+        # elif time > 43.0 and time <= 47.0:
+        #     self.goal = [1.0 - 1.0*((time - 43.0)/4.0), 0.0, -1.8 + 1.0*((time - 43.0)/4.0)]
+        # else:
+        #     self.goal = [0.0, 0.0, -0.8]
 
         # Slowly ascend to 0.5m, slide around a 1m square
         # if time <= 8.0:
@@ -371,6 +471,22 @@ class OffboardControl(Node):
     def vehicle_status_callback(self, vehicle_status):
         """Callback function for vehicle_status topic subscriber."""
         self.vehicle_status = vehicle_status
+    
+    # def thrust_setpoint_callback(self, thrust_setpoint):
+    #     """Callback function for recording the vehicle thrust setpoint"""
+    #     self.thrust_setpoint = thrust_setpoint
+
+    # def torque_setpoint_callback(self, torque_setpoint):
+    #     """Callback function for recording the vehicle torque setpoint"""
+    #     self.torque_setpoint = torque_setpoint
+
+    # def actuator_motors_callback(self, actuator_motors):
+    #     """Callback function for logging motor inputs. Range from [-1, 1]"""
+    #     self.actuator_motors = actuator_motors.control
+
+    def actuator_outputs_callback(self, actuators_outputs):
+        """Callback function for logging low level controller outputs. Range from [-1, 1]"""
+        self.actuator_outputs = actuators_outputs.output
 
     def arm(self):
         """Send an arm command to the vehicle."""
@@ -467,7 +583,7 @@ class OffboardControl(Node):
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.vehicle_command_publisher.publish(msg)
 
-    def publish_control_data(self, pos, q, pos_d, q_d, thrust_body, body_errors, vel, ang_vel):
+    def publish_control_data(self, pos, q, pos_d, q_d, thrust_body, body_errors, vel, ang_vel, actuator_outputs):
         """Publishes control data (pos/att, error, inputs, etc.) to ROS2 topic for analysis"""
         msg = ControlData()
         msg.position = pos
@@ -478,6 +594,9 @@ class OffboardControl(Node):
         msg.velocity = vel
         msg.angular_velocity = ang_vel
         msg.body_thrust_inputs = thrust_body
+        msg.actuator_outputs = actuator_outputs
+        # msg.px4_thrust_setpoint = thrust_setpoint
+        # msg.px4_torque_setpoint = torque_setpoint
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.control_data_publisher.publish(msg)
 
@@ -509,11 +628,10 @@ def main(args=None) -> None:
         rclpy.spin(offboard_control)
     except KeyboardInterrupt:
         offboard_control.get_logger().info('Keyboard interrupt, triggering landing sequence.\n')
-
-    offboard_control.land()
-    #offboard_control.e_land()
-    offboard_control.destroy_node()
-    rclpy.shutdown()
+        offboard_control.land()
+    finally:
+        offboard_control.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     try:

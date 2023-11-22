@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
@@ -59,10 +61,10 @@ class OffboardControl(Node):
     def update_goal(self, time):
         """Updates goal position for smooth trajectory tracking"""
         # Slowly ascend to 0.8m over 8 seconds and hold
-        # if time <= 8.0:
-        #     self.goal = [0.0, 0.0, -0.8*(time/8.0)]
-        # else:
-        #     self.goal = [0.0, 0.0, -0.8]
+        if time <= 8.0:
+            self.goal = [0.0, 0.0, -0.8*(time/8.0)]
+        else:
+            self.goal = [0.0, 0.0, -0.8]
 
         # Ascend, slide right then left
         # if time <= 8.0:
@@ -76,7 +78,7 @@ class OffboardControl(Node):
         # else:
         #     self.goal = [0.0, 0.0, -0.8]
 
-        #Ascend, slide forward then backward
+        # Ascend, slide forward then backward
         # if time <= 8.0:
         #     self.goal = [0.0, 0.0, -0.8]
         # elif time > 8.0 and time <= 12.0:
@@ -89,16 +91,16 @@ class OffboardControl(Node):
         #     self.goal = [0.0, 0.0, -0.8]
 
         # Slowly ascend, trace a circle with 1 meter radius
-        if time <= 8.0:
-            self.goal = [0.0, 0.0, -0.8*(time/8.0)]
-        elif time > 8.0 and time <= 12.0:
-            self.goal = [-1.0*((time - 8.0)/4.0), 0.0, -0.8]
-        elif time > 12.0 and time <= 36.0:
-            self.goal = [-1.0*np.cos(2*np.pi*((time - 12.0)/24.0)), 1.0*np.sin(2*np.pi*(time-12.0)/24.0), -0.8]
-        elif time > 36.0 and time <= 40.0:
-            self.goal = [-1.0 + 1.0*((time - 36.0)/4.0), 0.0, -0.8]
-        else:
-            self.goal = [0.0, 0.0, -0.8]
+        # if time <= 8.0:
+        #     self.goal = [0.0, 0.0, -0.8*(time/8.0)]
+        # elif time > 8.0 and time <= 12.0:
+        #     self.goal = [-1.0*((time - 8.0)/4.0), 0.0, -0.8]
+        # elif time > 12.0 and time <= 36.0:
+        #     self.goal = [-1.0*np.cos(2*np.pi*((time - 12.0)/24.0)), 1.0*np.sin(2*np.pi*(time-12.0)/24.0), -0.8]
+        # elif time > 36.0 and time <= 40.0:
+        #     self.goal = [-1.0 + 1.0*((time - 36.0)/4.0), 0.0, -0.8]
+        # else:
+        #     self.goal = [0.0, 0.0, -0.8]
 
         # Vertical Figure 8
         # if time <= 8.0:
@@ -222,6 +224,7 @@ class OffboardControl(Node):
         if self.offboard_setpoint_counter >= 11:
             self.now += 0.01
             self.update_goal(self.now)
+            print(self.goal)
             self.publish_position_setpoint(self.goal[0], self.goal[1], self.goal[2])
             self.publish_control_data(self.vehicle_odometry, self.goal)
 

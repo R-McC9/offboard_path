@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 
-from multiprocessing.context import _force_start_method
-from re import S
 import numpy as np
 import math
 from scipy.spatial.transform import Rotation as R
@@ -93,7 +91,7 @@ class OffboardControl(Node):
         self.drone_orientation = [1.0, 0.0, 0.0, 0.0]
         self.q_d = [1.0, 0.0, 0.0, 0.0]
 
-        self.force_d = -1.0
+        self.force_d = -2.0
 
         self.prev_err_x = 0.0
         self.err_sum_x = 0.0
@@ -124,6 +122,9 @@ class OffboardControl(Node):
         self.board_pos = [1.554, -0.069, 1.094]
         self.board_ori = [0.9999, 0.00165, 0.000656, 0.00325]
         self.dtb = [0.0, 0.0, 0.0]
+
+        self.values = []
+        self.sum = 0
 
     def PID_position_control(self):
         """PID for basic position control"""
@@ -202,11 +203,6 @@ class OffboardControl(Node):
             U_y = np.clip(U_y, U_y_max, -U_y_max)
             self.err_sum_y = 0
 
-        # rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0], degrees=True)
-        # rot_d = rot_d.as_quat()
-        # self.q_d = np.float32([rot_d[3], rot_d[0], rot_d[1], rot_d[2]])
-        # self.q_d = [1.0, 0.0, 0.0, 0.0]
-        #self.goal = [0.0, 0.0, -0.6]
         self.publish_attitude_setpoint(self.q_d, [round(U_x, 4), round(U_y, 4), round(U_z, 4)])
 
         # print(self.start_pos)
@@ -227,9 +223,9 @@ class OffboardControl(Node):
         kiz = 0.006
         kdz = 20
 
-        kpx = 0.05
-        kix = 0.0
-        kdx = 0.0
+        kpx = 0.5
+        # kix = 0.0
+        kdx = 15.0
 
         kpy = 0.7
         kiy = 0.002
@@ -258,8 +254,8 @@ class OffboardControl(Node):
 
         U_z_max = -1.0
 
-        U_x_max = -0.3
-        U_y_max = -0.3
+        U_x_max = -0.5
+        U_y_max = -0.5
 
         # Clamp integral error term when motors are saturated
         if U_z <= U_z_max or U_z >= 0.0:
@@ -289,16 +285,30 @@ class OffboardControl(Node):
         # Force controller
         # Calculate error in desired force and actual force (!!!Change make sure this is correct when switching to reality!!!!
         # +X in the gazebo sim may not be +X in real life!)
-        # err_F = self.force_d - self.current_F_x
-        err_F = self.force_d - self.current_F_z
+        err_F = self.force_d - self.current_F_x
+
+        # tunable gains
+        # Reality
+        kfp = 0.0002
+        kfi = 0.0005
+
+        #simulation
+        # kfp = 0.1
+        # kfi = 0.3
 
         self.err_sum_F += err_F
 
-        err_dif_F = err_F - self.prev_err_F
+        # err_dif_F = err_F - self.prev_err_F
+        err_dif_x = err_x_body - self.prev_err_x
 
-        U_x = kpx * err_F + kix * self.err_sum_F + kdx * err_dif_F
+        # U_x = -1*(kpx * err_F + kix * self.err_sum_F + kdx * err_dif_F)
+
+        U_x = -1*(kpx*err_x_body + kdx*err_dif_x + kfp*err_F + kfi*self.err_sum_F)
+
+        # print(U_x, kpx*err_x_body, kdx*err_dif_x, kfp*err_F, kfi*self.err_sum_F)
 
         self.prev_err_F = err_F
+        self.prev_err_x = err_x_body
 
         # Clamp integral error term when motors are saturated
         # bound the U_x input so that the drone doesn't bounce too much against the wall
@@ -325,9 +335,9 @@ class OffboardControl(Node):
             self.first_run = False
 
     def force_torque_callback_sim(self, msg):
-        """Callback function for simulated force/torque sensor"""
+        """Callback function for Gazebo simulated force/torque sensor"""
         # record the current values of force
-        self.current_F_x = -1 * msg.wrench.force.x
+        self.current_F_x = 1 * msg.wrench.force.x
         self.current_F_y = msg.wrench.force.y
         self.current_F_z = msg.wrench.force.z
         
@@ -345,13 +355,25 @@ class OffboardControl(Node):
         if self.count == N:
             self.avg = self.prev_F.sum(axis=0) / N
 
+        # Create moving average for filtering data
+        self.current_F_x = self.mov_avg(msg.wrench.force.x - self.avg[0])
+        self.current_F_y = self.mov_avg(msg.wrench.force.y - self.avg[1])
+        self.current_F_z = self.mov_avg(msg.wrench.force.z - self.avg[2])
+
         # record the current values of force
-        self.current_F_x = msg.wrench.force.x - self.avg[0]
-        self.current_F_y = msg.wrench.force.y - self.avg[1]
-        self.current_F_z = msg.wrench.force.z - self.avg[2]
+        # self.current_F_x = msg.wrench.force.x - self.avg[0]
+        # self.current_F_y = msg.wrench.force.y - self.avg[1]
+        # self.current_F_z = msg.wrench.force.z - self.avg[2]
         
         # Record the currrent values of torque
         # self.curent_T_x = msg.wrench.torque.x
+
+    def mov_avg(self, value):
+        self.values.append(value)
+        self.sum += value
+        if len(self.values) > 50:
+            self.sum -= self.values.pop(0)
+        return float(self.sum) / len(self.values)
 
     def save_F(self, F, N):
         """Saves N + 1 previous force datapoints for averaging in order to zero the sensor
@@ -500,14 +522,14 @@ class OffboardControl(Node):
         #     self.goal = [0.0, 0.0, -0.8]
 
         # Slowly ascend to 0.5m, trace a vertical figure eight
-        if time <= 8.0:
-            self.goal = [0.0, 0.0, -0.8*(time/8.0)]
-        elif time > 8.0 and time <= 30.0:
-            self.goal = [(np.cos(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))) / (1.0 + np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))**2), 
-                                    0.0, 
-                                    -0.8 + (np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2)) * np.cos(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))) / (1.0 + np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))**2)]
-        else:
-            self.goal = [0.0, 0.0, -0.8]
+        # if time <= 8.0:
+        #     self.goal = [0.0, 0.0, -0.8*(time/8.0)]
+        # elif time > 8.0 and time <= 30.0:
+        #     self.goal = [(np.cos(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))) / (1.0 + np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))**2), 
+        #                             0.0, 
+        #                             -0.8 + (np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2)) * np.cos(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))) / (1.0 + np.sin(2*np.pi*((time - 8.0)/22.0) + (np.pi/2))**2)]
+        # else:
+        #     self.goal = [0.0, 0.0, -0.8]
 
         # Ascend to 0.8 meters, approach the board, make contact, back away
         # if time < 8.0:
@@ -531,24 +553,82 @@ class OffboardControl(Node):
         #Ascend to middle of board, center/align self normal to board, approach slowly, engage hybrid control, back away, land
         # if time <= 8.0:
         #     self.goal = [0.0, 0.0, -self.board_pos[2]*(time/8.0)]
-        # elif time > 8.0 and time <= 16.0:
-        #     self.goal = [0.0, self.board_pos[1]*((time -8.0)/8.0), -self.board_pos[2]]
-        # elif time > 16.0 and time <= 26.0:
-        #     self.goal = [(self.board_pos[0] - 0.7)*((time - 16.0)/10.0), self.board_pos[1], -self.board_pos[2]]
-        # elif time > 26.0 and time <= 36.0:
+        # elif time > 8.0 and time <= 12.0:
+        #     self.goal = [0.0, self.board_pos[1]*((time -8.0)/4.0), -self.board_pos[2]]
+        # elif time > 12.0 and time <= 16.0:
+        #     self.goal = [(self.board_pos[0] - 0.7)*((time - 12.0)/4.0), self.board_pos[1], -self.board_pos[2]]
+        # elif time > 16.0 and time <= 36.0:
         #     self.hybrid = True
 
         #     self.goal = [self.board_pos[0] - 0.7, self.board_pos[1], -self.board_pos[2]]
-        # elif time > 36.0 and time <= 44.0:
+        # elif time > 36.0 and time <= 41.0:
         #     self.hybrid = False
 
-        #     self.goal = [(self.board_pos[0] - 0.7) - (self.board_pos[0] - 0.7)*((time - 36.0)/8.0), self.board_pos[1], -self.board_pos[2]]
+        #     self.goal = [(self.board_pos[0] - 0.7) - (self.board_pos[0] - 0.7)*((time - 36.0)/5.0), self.board_pos[1], -self.board_pos[2]]
         # else:
         #     self.goal = [0.0, self.board_pos[1], -self.board_pos[2]]
+
+        # self.goal = [round(self.goal[0], 3), round(self.goal[1], 3), round(self.goal[2], 3)]
+
+        # Board contact slide
+        # if time <= 8.0:
+        #     self.goal = [0.0, 0.0, -self.board_pos[2]*(time/8.0)]
+        # elif time > 8.0 and time <= 12.0:
+        #     self.goal = [0.0, self.board_pos[1]*((time -8.0)/4.0), -self.board_pos[2]]
+        # elif time > 12.0 and time <= 16.0:
+        #     self.goal = [(self.board_pos[0] - 0.7)*((time - 12.0)/4.0), self.board_pos[1], -self.board_pos[2]]
+        # elif time > 16.0 and time <= 20.0:
+        #     self.hybrid = True
+        #     self.goal = [self.board_pos[0] - 0.7, self.board_pos[1], -self.board_pos[2]]
+        # elif time > 20.0 and time <= 30.0:
+        #     self.hybrid = True
+        #     self.goal = [self.board_pos[0] - 0.7, self.board_pos[1], -self.board_pos[2]-0.2*((time-20.0)/10.0)]
+        # elif time > 30.0 and time <= 40.0:
+        #     self.hybrid = True
+        #     self.goal = [self.board_pos[0] - 0.7, self.board_pos[1], -self.board_pos[2]-0.2 + 0.2*((time-30.0)/10.0)]
+        # elif time > 40.0 and time <= 45.0:
+        #     self.hybrid = False
+
+        #     self.goal = [(self.board_pos[0] - 0.7) - (self.board_pos[0] - 0.7)*((time - 40.0)/5.0), self.board_pos[1], -self.board_pos[2]]
+        # else:
+        #     self.goal = [0.0, self.board_pos[1], -self.board_pos[2]]
+
+        # Board Contact Circle Slide
+        if time <= 8.0:
+            self.goal = [0.0, 0.0, -self.board_pos[2]*(time/8.0)]
+        elif time > 8.0 and time <= 12.0:
+            self.goal = [0.0, self.board_pos[1]*((time -8.0)/4.0), -self.board_pos[2]]
+        elif time > 12.0 and time <= 16.0:
+            self.goal = [(self.board_pos[0] - 0.7)*((time - 12.0)/4.0), self.board_pos[1], -self.board_pos[2]]
+        elif time > 16.0 and time <= 20.0:
+            self.hybrid = True
+            self.goal = [self.board_pos[0] - 0.7, self.board_pos[1], -self.board_pos[2]]
+        elif time > 20.0 and time <= 40.0:
+            self.hybrid = True
+            self.goal = [self.board_pos[0] - 0.7, self.board_pos[1] + 0.2*np.cos(2*np.pi*((time-20.0)/20.0) + (3/2)*np.pi), -self.board_pos[2] + (-0.2 - 0.2*np.sin(2*np.pi*((time-20.0)/20.0) + (3/2)*np.pi))]
+        elif time > 40.0 and time <= 45.0:
+            self.hybrid = False
+
+            self.goal = [(self.board_pos[0] - 0.7) - (self.board_pos[0] - 0.7)*((time - 40.0)/5.0), self.board_pos[1], -self.board_pos[2]]
+        else:
+            self.goal = [0.0, self.board_pos[1], -self.board_pos[2]]
 
         self.goal = [round(self.goal[0], 3), round(self.goal[1], 3), round(self.goal[2], 3)]
         print(self.goal)
         return self.goal
+
+    # def update_force(self,time):
+    #     if time <= 22.0:
+    #         self.force_d = -2.0
+    #     elif time > 22.0 and time <= 28.0:
+    #         self.force_d = -2.0 + -3.0*((time-22.0)/6.0)
+    #     elif time > 28.0 and time < 36.0:
+    #         self.force_d = -5.0
+    #     else:
+    #         self.force_d = 0.0
+        
+    #     print(self.force_d)
+    #     return self.force_d
     
     def world_err_to_body_err(self, rpy, err_array):
         """Change error in world frame to error inControlData.csv body frame"""
@@ -670,6 +750,7 @@ class OffboardControl(Node):
                 self.hybrid_control()
             self.update_goal(self.now)
             self.update_quaternion(self.now)
+            # self.update_force(self.now)
 
 def main(args=None) -> None:
     print('Starting offboard control node...')

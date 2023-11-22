@@ -21,6 +21,8 @@ setup(
     entry_points={
         'console_scripts': [
             'offboard_ctrl_omni = offboard_path.offboard_ctrl_omni:main',
+            'offboard_ctrl_omni_space = offboard_path.offboard_ctrl_omni_space:main',
+            'offboard_ctrl_omni_space_reverse = offboard_path.offboard_ctrl_omni_space_reverse:main',
             'offboard_ctrl_quad = offboard_path.offboard_ctrl_quad:main',
             'offboard_ctrl_hex = offboard_path.offboard_ctrl_hex:main',
             'offboard_ctrl_hex_LQR = offboard_path.offboard_ctrl_hex_LQR:main',
