@@ -91,6 +91,7 @@ class OffboardControl(Node):
         self.now = 0.0
         self.index = 0.0
         self.index_max = len(self.df)
+        self.finished = False
         self.traj_timer = self.create_timer(0.01, self.traj_timer_callback)
 
         self.goal = [0.0, 0.0, -0.0]
@@ -223,10 +224,12 @@ class OffboardControl(Node):
         """Updates quaternion setpoint for smooth attitude tracking."""
         # Hold attitude @ 0 pitch/roll/yaw
         # rot_d = R.from_euler('zxy', [0.0, 0.0, 0.0])
+        if index < self.index_max:
+            csv_quat = self.df.iloc[[index], [4,5,6,7]].to_numpy()
 
-        csv_quat = self.df.iloc[[index], [4,5,6,7]].to_numpy()
-
-        self.q_d = np.float32(csv_quat[0])
+            self.q_d = np.float32(csv_quat[0])
+        else:
+            self.finished = True
 
         # print(self.q_d)
 
@@ -251,12 +254,12 @@ class OffboardControl(Node):
 # Change trajectories to be a selected CSV on startup. Build python script for trajectory to CSV generation
     def update_goal(self, time, index):
         """Updates position setpoint for smooth position tracking."""
-        if index <= self.index_max:
+        if index < self.index_max:
             csv_goal = self.df.iloc[[index], [1,2,3]].to_numpy()
 
             self.goal = np.float32(csv_goal[0])
         else:
-            self.land()
+            self.finished = True
 
         # Slowly ascend to 0.8m over 8 seconds and hold
         # if time <= 8.0:
@@ -429,12 +432,14 @@ class OffboardControl(Node):
     def traj_timer_callback(self) -> None:
         """Callback function for updating vehicle trajectory"""
 
-        if self.offboard_setpoint_counter >= 11:
+        if self.offboard_setpoint_counter >= 11 and self.finished == False:
             self.now += 0.01
             self.PID_controller()
             self.update_goal(self.now, self.index)
             self.update_quaternion(self.now, self.index)
             self.index += 1
+        elif self.finished == True:
+            raise Exception("End of trajectory csv reached")
 
 def main(args=None) -> None:
     print('Starting offboard control node...')
@@ -442,6 +447,9 @@ def main(args=None) -> None:
     try:
         offboard_control = OffboardControl()
         rclpy.spin(offboard_control)
+    except Exception:
+        offboard_control.get_logger().info('End of CSV reached, landing')
+        offboard_control.land()
     except KeyboardInterrupt:
         offboard_control.get_logger().info('Keyboard interrupt, triggering landing sequence.\n')
         offboard_control.land()
