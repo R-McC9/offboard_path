@@ -6,7 +6,12 @@ This ROS2 package contains several scripts for flying multirotors created at the
 Be absolutely certain you know what you are doing before attempting to fly a real vehicle.**
 
 ## Installation
-This package has been tested using ROS2 Foxy on Linux 20.04.
+This package has been tested using ROS2 Foxy on Ubuntu 20.04.
+
+### Dependencies
+This package depends on several other packages to function. These need to be added to your ROS2 workspaces src and built before the offboard_path package will function.
+The [px4_msgs package](https://github.com/PX4/px4_msgs) for all the custom uORB messages used for sending data to the flight controller.
+And the [offboard_msgs](https://github.com/R-McC9/offboard_msgs) package, a package of custom messages for logging data via ROS bags built specifically for this project.
 
 Clone the latest stable version into the src of your chosen ROS2 workspace. e.g. "ros2_ws", then build and source.
 
