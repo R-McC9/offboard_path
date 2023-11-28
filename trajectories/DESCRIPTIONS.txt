@@ -1,0 +1,26 @@
+The following are brief descriptions of the trajectories contatined in the packages by default.
+These trajectories are generated using a matlab script and need a specific format to function.
+
+Each row contatins a time stamp, incremented by 0.01 seconds as this is the length of time between each goal coordinate update in the offboard_ctrl scripts.
+
+Each row has a position in R^3 (x,y,z). REMEMBER: PX4 uses a FRD frame configuration, so all z values will be negative.
+Each row has a quaternion (w,i,j,k).
+
+TEST ALL TRAJECTORIES IN SIMULATION FIRST. UNEXPECTED ERRORS WILL HAPPEN.
+
+ANY FILE BEGINNING WITH "OMNI" IS INTENDED ONLY FOR THE OMNICOPTER.
+DO NOT ATTEMPT TO FLY THOSE TRAJECTORIES ON ANYTHING BUT THE OMNICOPTER.
+
+ANY FILE BEGINNING WITH "HEX" IS INTENDED FOR THE FULLY ACTUATED HEXAROTOR.
+
+1m_Circle_0Yaw: Ascends to 0.8m above ground, translates backwards to (-1, 0), moves in a circle centered at the origin. Maintains yaw throuought.
+
+OMNI_1m_Circle_Rotation: Omnicopter ascends to 0.8m, translates to (-1, 0), moves in a circle centered at the origin while rotating about an axis perpendicular to the circle.
+
+OMNI_Hover_Circle_Rotation: Omnicopter ascends to 0.8m, rotates according to the same rotation as in OMNI_1m_Circle_Rotation but without translating.
+
+OMNI_Hover_Rotate_360: Omnicopter ascends to 0.8m, rotates about each axis by 360 degrees individually.
+
+OMNI_Hover_Rotate_2_Axes: Omnicopter ascends to 0.8m, rotates about an off-axis. Inteded to rotate the omnicopter over its corner.
+                                                                         _
+OMNI_L_Shaped_Inspection: Omnicopter flys in a trajectory shaped like: _| 
