@@ -39,9 +39,11 @@ Executing ```ros2 run offboard_path offboard_ctrl_...``` will:
 - Follow said setpoints until the trajectory has ended
 - Land the multirotor when interrupting the ```ros2 run``` terminal with ctrl+c.
 
+## Creating your own trajectories
+
+Included in this package are a variety of trajectories tested both in simulation and on a real vehicle. Brief descriptions of these may be found [here](https://github.com/R-McC9/offboard_path/blob/main/trajectories/DESCRIPTIONS.txt).
+
+All trajectories are done as CSV files, and include a the position (x,y,z) and quaternion (w,i,j,k) timstamped every 0.01 seconds.
+
 ## TO DO
-Change from starting with ```ros2 run``` to using a launch file.
-
-Change trajectories from part of the script to a CSV that is loaded in according to a parameter from the ```ros2 launch``` command.
-
-Implement programatic landing instad of using keyboard interrupt exclusively.
+Implement changes found in ```offboard_ctrl_omni_params.py``` into ```offboard_ctrl_omni.py```
