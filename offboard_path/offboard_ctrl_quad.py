@@ -1,11 +1,9 @@
 #!/usr/bin/env python
 
-from ast import While
 from time import sleep
 import math
 import numpy as np
 from scipy.spatial.transform import Rotation as R
-import keyboard
 
 import rclpy
 from rclpy.clock import Clock
