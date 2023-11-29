@@ -20,7 +20,7 @@ cd ros2_ws/src
 git clone https://github.com/R-McC9/offboard_path
 cd ..
 colcon build --packages-select offboard_path
-source ros2_ws/install/setup.bash
+source /install/setup.bash
 ```
 
 ## Usage
